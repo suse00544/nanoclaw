@@ -97,7 +97,11 @@ export class FeishuChannel implements Channel {
 
       // Parse message content based on type
       let content = '';
-      const attachments: Array<{ type: 'image' | 'file' | 'video' | 'audio'; path: string; name?: string }> = [];
+      const attachments: Array<{
+        type: 'image' | 'file' | 'video' | 'audio';
+        path: string;
+        name?: string;
+      }> = [];
 
       if (messageType === 'text') {
         try {
@@ -135,7 +139,11 @@ export class FeishuChannel implements Channel {
             if (groupFolder) {
               const groupPath = path.join(process.cwd(), 'groups', groupFolder);
               fs.mkdirSync(path.join(groupPath, 'images'), { recursive: true });
-              const imagePath = path.join(groupPath, 'images', `${messageId}.png`);
+              const imagePath = path.join(
+                groupPath,
+                'images',
+                `${messageId}.png`,
+              );
 
               // Write image using SDK's writeFile method
               await imageResp.writeFile(imagePath);
@@ -147,11 +155,17 @@ export class FeishuChannel implements Channel {
               });
 
               content = '[图片]';
-              logger.info({ messageId, imageKey, imagePath }, 'Image downloaded and saved');
+              logger.info(
+                { messageId, imageKey, imagePath },
+                'Image downloaded and saved',
+              );
             }
           }
         } catch (err) {
-          logger.error({ err, messageId, messageContent: message.content }, 'Failed to download image');
+          logger.error(
+            { err, messageId, messageContent: message.content },
+            'Failed to download image',
+          );
           content = '[图片]';
         }
       } else if (messageType === 'file') {
@@ -407,7 +421,11 @@ export class FeishuChannel implements Channel {
    * Send a file to a Feishu chat.
    * Supports images, PDFs, documents, and other file types.
    */
-  async sendFile(jid: string, filePath: string, caption?: string): Promise<void> {
+  async sendFile(
+    jid: string,
+    filePath: string,
+    caption?: string,
+  ): Promise<void> {
     if (!this.client) {
       throw new Error('Feishu client not initialized');
     }
@@ -449,7 +467,8 @@ export class FeishuChannel implements Channel {
           },
         });
 
-        const imageKey = (uploadResult as any)?.data?.image_key || uploadResult?.image_key;
+        const imageKey =
+          (uploadResult as any)?.data?.image_key || uploadResult?.image_key;
         if (!imageKey) {
           throw new Error('Failed to upload image: no image_key returned');
         }
@@ -468,7 +487,8 @@ export class FeishuChannel implements Channel {
           },
         });
 
-        const fKey = (uploadResult as any)?.data?.file_key || uploadResult?.file_key;
+        const fKey =
+          (uploadResult as any)?.data?.file_key || uploadResult?.file_key;
         if (!fKey) {
           throw new Error('Failed to upload file: no file_key returned');
         }

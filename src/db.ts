@@ -121,9 +121,7 @@ function createSchema(database: Database.Database): void {
 
   // Add attachments column if it doesn't exist (migration for existing DBs)
   try {
-    database.exec(
-      `ALTER TABLE messages ADD COLUMN attachments TEXT`,
-    );
+    database.exec(`ALTER TABLE messages ADD COLUMN attachments TEXT`);
   } catch {
     /* column already exists */
   }
@@ -338,10 +336,12 @@ export function getNewMessages(
 
   const rawRows = db
     .prepare(sql)
-    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as Array<NewMessage & { attachments?: string }>;
+    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as Array<
+    NewMessage & { attachments?: string }
+  >;
 
   // Parse attachments JSON
-  const rows = rawRows.map(row => ({
+  const rows = rawRows.map((row) => ({
     ...row,
     attachments: row.attachments ? JSON.parse(row.attachments) : undefined,
   }));
@@ -376,10 +376,12 @@ export function getMessagesSince(
   `;
   const rows = db
     .prepare(sql)
-    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as Array<NewMessage & { attachments?: string }>;
+    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as Array<
+    NewMessage & { attachments?: string }
+  >;
 
   // Parse attachments JSON
-  return rows.map(row => ({
+  return rows.map((row) => ({
     ...row,
     attachments: row.attachments ? JSON.parse(row.attachments) : undefined,
   }));

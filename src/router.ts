@@ -21,8 +21,8 @@ export function formatMessages(
     // Add image attachments if present
     if (m.attachments && m.attachments.length > 0) {
       const imageAttachments = m.attachments
-        .filter(att => att.type === 'image')
-        .map(att => `<image path="${escapeXml(att.path)}" />`)
+        .filter((att) => att.type === 'image')
+        .map((att) => `<image path="${escapeXml(att.path)}" />`)
         .join('');
       if (imageAttachments) {
         messageContent = `${messageContent}${imageAttachments}`;

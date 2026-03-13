@@ -92,7 +92,11 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     'Unauthorized IPC message attempt blocked',
                   );
                 }
-              } else if (data.type === 'file' && data.chatJid && data.filePath) {
+              } else if (
+                data.type === 'file' &&
+                data.chatJid &&
+                data.filePath
+              ) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
                 if (
@@ -102,7 +106,10 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   // Map container path to host path
                   let hostFilePath = data.filePath;
                   if (hostFilePath.startsWith('/workspace/group/')) {
-                    const relativePath = hostFilePath.replace('/workspace/group/', '');
+                    const relativePath = hostFilePath.replace(
+                      '/workspace/group/',
+                      '',
+                    );
                     const groupPath = path.join(GROUPS_DIR, sourceGroup);
                     hostFilePath = path.join(groupPath, relativePath);
                   } else if (hostFilePath.startsWith('/tmp/')) {
@@ -117,13 +124,26 @@ export function startIpcWatcher(deps: IpcDeps): void {
 
                   if (!fs.existsSync(hostFilePath)) {
                     logger.warn(
-                      { containerPath: data.filePath, hostPath: hostFilePath, sourceGroup },
+                      {
+                        containerPath: data.filePath,
+                        hostPath: hostFilePath,
+                        sourceGroup,
+                      },
                       'File not found on host after path mapping',
                     );
                   } else {
-                    await deps.sendFile(data.chatJid, hostFilePath, data.caption);
+                    await deps.sendFile(
+                      data.chatJid,
+                      hostFilePath,
+                      data.caption,
+                    );
                     logger.info(
-                      { chatJid: data.chatJid, containerPath: data.filePath, hostPath: hostFilePath, sourceGroup },
+                      {
+                        chatJid: data.chatJid,
+                        containerPath: data.filePath,
+                        hostPath: hostFilePath,
+                        sourceGroup,
+                      },
                       'IPC file sent',
                     );
                   }
