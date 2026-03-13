@@ -63,6 +63,39 @@ server.tool(
 );
 
 server.tool(
+  'send_file',
+  "Send a file (image, PDF, document, etc.) to the user or group. The file must exist in the workspace. Use this after creating screenshots, PDFs, or other files that should be sent to the chat.",
+  {
+    file_path: z.string().describe('Absolute path to the file to send (must be in /workspace/group or /tmp)'),
+    caption: z.string().optional().describe('Optional caption/message to send with the file'),
+    sender: z.string().optional().describe('Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.'),
+  },
+  async (args) => {
+    // Validate file exists
+    if (!fs.existsSync(args.file_path)) {
+      return {
+        content: [{ type: 'text' as const, text: `File not found: ${args.file_path}` }],
+        isError: true,
+      };
+    }
+
+    const data: Record<string, string | undefined> = {
+      type: 'file',
+      chatJid,
+      filePath: args.file_path,
+      caption: args.caption || undefined,
+      sender: args.sender || undefined,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(MESSAGES_DIR, data);
+
+    return { content: [{ type: 'text' as const, text: `File queued for sending: ${path.basename(args.file_path)}` }] };
+  },
+);
+
+server.tool(
   'schedule_task',
   `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
 

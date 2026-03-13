@@ -3,7 +3,7 @@ import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { DATA_DIR, GROUPS_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
@@ -12,6 +12,7 @@ import { RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
+  sendFile: (jid: string, filePath: string, caption?: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -89,6 +90,47 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },
                     'Unauthorized IPC message attempt blocked',
+                  );
+                }
+              } else if (data.type === 'file' && data.chatJid && data.filePath) {
+                // Authorization: verify this group can send to this chatJid
+                const targetGroup = registeredGroups[data.chatJid];
+                if (
+                  isMain ||
+                  (targetGroup && targetGroup.folder === sourceGroup)
+                ) {
+                  // Map container path to host path
+                  let hostFilePath = data.filePath;
+                  if (hostFilePath.startsWith('/workspace/group/')) {
+                    const relativePath = hostFilePath.replace('/workspace/group/', '');
+                    const groupPath = path.join(GROUPS_DIR, sourceGroup);
+                    hostFilePath = path.join(groupPath, relativePath);
+                  } else if (hostFilePath.startsWith('/tmp/')) {
+                    // Files in /tmp are not accessible from host - skip path mapping
+                    logger.warn(
+                      { filePath: data.filePath, sourceGroup },
+                      'Cannot send file from container /tmp - file must be in /workspace/group',
+                    );
+                    fs.unlinkSync(filePath);
+                    continue;
+                  }
+
+                  if (!fs.existsSync(hostFilePath)) {
+                    logger.warn(
+                      { containerPath: data.filePath, hostPath: hostFilePath, sourceGroup },
+                      'File not found on host after path mapping',
+                    );
+                  } else {
+                    await deps.sendFile(data.chatJid, hostFilePath, data.caption);
+                    logger.info(
+                      { chatJid: data.chatJid, containerPath: data.filePath, hostPath: hostFilePath, sourceGroup },
+                      'IPC file sent',
+                    );
+                  }
+                } else {
+                  logger.warn(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'Unauthorized IPC file send attempt blocked',
                   );
                 }
               }

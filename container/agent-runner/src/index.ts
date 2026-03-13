@@ -337,6 +337,7 @@ async function runQuery(
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
+  log(`*** MODEL: claude-opus-4-6 ***`);
   const stream = new MessageStream();
   stream.push(prompt);
 
@@ -389,6 +390,9 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  const modelName = 'claude-opus-4-6';
+  log(`Using model: ${modelName}`);
+
   for await (const message of query({
     prompt: stream,
     options: {
@@ -396,6 +400,7 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
+      model: modelName, // Use Opus 4.6 (latest Opus model)
       systemPrompt: globalClaudeMd
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
         : undefined,
