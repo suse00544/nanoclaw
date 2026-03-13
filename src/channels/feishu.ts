@@ -311,11 +311,14 @@ export class FeishuChannel implements Channel {
 
               const filePath = path.join(filesDir, `${messageId}_${fileName}`);
 
-              // Download file using drive API
-              // Note: Files in messages need to be downloaded via drive.file API
-              const fileResp = await this.client.drive.file.download({
+              // Download file using messageResource API (same as image download)
+              const fileResp = await this.client.im.messageResource.get({
                 path: {
-                  file_token: fileKey,
+                  message_id: messageId,
+                  file_key: fileKey,
+                },
+                params: {
+                  type: 'file',
                 },
               });
 
