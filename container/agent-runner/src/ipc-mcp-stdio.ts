@@ -96,6 +96,79 @@ server.tool(
 );
 
 server.tool(
+  'publish_artifact',
+  'Upload an HTML/CSS/JS file or any file to Volcengine TOS and return a public URL. Use this to share interactive artifacts (dashboards, visualizations, web pages) with the user.',
+  {
+    file_path: z.string().describe('Absolute path to the file to upload (must be in /workspace/group or /tmp)'),
+    filename: z.string().optional().describe('Custom filename for the URL. If not provided, uses the original filename with a timestamp prefix'),
+  },
+  async (args) => {
+    if (!fs.existsSync(args.file_path)) {
+      return {
+        content: [{ type: 'text' as const, text: `File not found: ${args.file_path}` }],
+        isError: true,
+      };
+    }
+
+    const bucket = process.env.TOS_BUCKET || 'beacon-artifacts';
+    const region = process.env.TOS_REGION || 'cn-guangzhou';
+    const endpoint = process.env.TOS_ENDPOINT || 'tos-cn-guangzhou.volces.com';
+
+    if (!process.env.TOS_ACCESS_KEY_ID || !process.env.TOS_SECRET_ACCESS_KEY) {
+      return {
+        content: [{ type: 'text' as const, text: 'TOS credentials not configured. Set TOS_ACCESS_KEY_ID and TOS_SECRET_ACCESS_KEY environment variables.' }],
+        isError: true,
+      };
+    }
+
+    const { TosClient } = await import('@volcengine/tos-sdk');
+
+    const client = new TosClient({
+      accessKeyId: process.env.TOS_ACCESS_KEY_ID,
+      accessKeySecret: process.env.TOS_SECRET_ACCESS_KEY,
+      region,
+      endpoint,
+    });
+
+    const originalName = path.basename(args.file_path);
+    const ext = path.extname(originalName);
+    const timestamp = Date.now();
+    const objectKey = args.filename || `${timestamp}-${originalName}`;
+
+    // Determine content type
+    const contentTypeMap: Record<string, string> = {
+      '.html': 'text/html; charset=utf-8',
+      '.css': 'text/css; charset=utf-8',
+      '.js': 'application/javascript; charset=utf-8',
+      '.json': 'application/json; charset=utf-8',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.svg': 'image/svg+xml',
+      '.pdf': 'application/pdf',
+      '.md': 'text/plain; charset=utf-8',
+    };
+    const contentType = contentTypeMap[ext.toLowerCase()] || 'application/octet-stream';
+
+    const fileBuffer = fs.readFileSync(args.file_path);
+
+    await client.putObject({
+      bucket,
+      key: objectKey,
+      body: fileBuffer,
+      contentType,
+    });
+
+    const publicUrl = `https://${bucket}.${endpoint}/${objectKey}`;
+
+    return {
+      content: [{ type: 'text' as const, text: publicUrl }],
+    };
+  },
+);
+
+server.tool(
   'schedule_task',
   `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
 

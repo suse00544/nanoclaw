@@ -241,6 +241,23 @@ function buildContainerArgs(
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
 
+  // Pass TOS env vars for artifact hosting (if present in host environment)
+  if (process.env.TOS_ACCESS_KEY_ID) {
+    args.push('-e', `TOS_ACCESS_KEY_ID=${process.env.TOS_ACCESS_KEY_ID}`);
+  }
+  if (process.env.TOS_SECRET_ACCESS_KEY) {
+    args.push('-e', `TOS_SECRET_ACCESS_KEY=${process.env.TOS_SECRET_ACCESS_KEY}`);
+  }
+  if (process.env.TOS_BUCKET) {
+    args.push('-e', `TOS_BUCKET=${process.env.TOS_BUCKET}`);
+  }
+  if (process.env.TOS_REGION) {
+    args.push('-e', `TOS_REGION=${process.env.TOS_REGION}`);
+  }
+  if (process.env.TOS_ENDPOINT) {
+    args.push('-e', `TOS_ENDPOINT=${process.env.TOS_ENDPOINT}`);
+  }
+
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
   // or when getuid is unavailable (native Windows without WSL).

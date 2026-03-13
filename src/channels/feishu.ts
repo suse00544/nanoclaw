@@ -168,6 +168,124 @@ export class FeishuChannel implements Channel {
           );
           content = '[图片]';
         }
+      } else if (messageType === 'post') {
+        try {
+          logger.info(
+            { messageId, rawContent: message.content },
+            'Processing post message',
+          );
+          const postContent = JSON.parse(message.content);
+          logger.info({ postContent }, 'Parsed post content');
+          // Post content might be nested under zh_cn/en_us, or directly at root
+          const post = postContent.content
+            ? postContent
+            : postContent.zh_cn || postContent.en_us || postContent;
+          logger.info({ post }, 'Selected post locale');
+
+          const textParts: string[] = [];
+
+          if (post.title) textParts.push(post.title);
+
+          for (const paragraph of post.content || []) {
+            for (const element of paragraph) {
+              switch (element.tag) {
+                case 'text':
+                  if (element.text) textParts.push(element.text);
+                  break;
+                case 'img':
+                  if (element.image_key && this.client) {
+                    try {
+                      // Download image using messageResource API
+                      const imageResp =
+                        await this.client.im.messageResource.get({
+                          path: {
+                            message_id: messageId,
+                            file_key: element.image_key,
+                          },
+                          params: {
+                            type: 'image',
+                          },
+                        });
+
+                      const fs = await import('fs');
+                      const path = await import('path');
+
+                      const groupFolder =
+                        this.opts.registeredGroups()[chatJid]?.folder;
+
+                      if (groupFolder) {
+                        const groupPath = path.join(
+                          process.cwd(),
+                          'groups',
+                          groupFolder,
+                        );
+                        fs.mkdirSync(path.join(groupPath, 'images'), {
+                          recursive: true,
+                        });
+                        const imagePath = path.join(
+                          groupPath,
+                          'images',
+                          `${messageId}_${element.image_key}.png`,
+                        );
+
+                        await imageResp.writeFile(imagePath);
+
+                        attachments.push({
+                          type: 'image' as const,
+                          path: imagePath,
+                          name: `${messageId}_${element.image_key}.png`,
+                        });
+
+                        logger.info(
+                          {
+                            messageId,
+                            imageKey: element.image_key,
+                            imagePath,
+                          },
+                          'Post image downloaded',
+                        );
+                      }
+                    } catch (err) {
+                      logger.error(
+                        { err, messageId, imageKey: element.image_key },
+                        'Failed to download post image',
+                      );
+                    }
+                  }
+                  break;
+                case 'a':
+                  if (element.text && element.href) {
+                    textParts.push(`[${element.text}](${element.href})`);
+                  }
+                  break;
+                case 'at':
+                  if (element.user_name) {
+                    textParts.push(`@${element.user_name}`);
+                  } else {
+                    textParts.push('@user');
+                  }
+                  break;
+              }
+            }
+            textParts.push('\n');
+          }
+
+          // Add image references from attachments into the text content
+          for (const att of attachments) {
+            if (att.type === 'image') {
+              textParts.push(`\n<image path="${att.path}" />`);
+            }
+          }
+
+          content = textParts.join('').trim();
+          if (!content) content = '[富文本消息]';
+        } catch (err) {
+          logger.error(
+            { err, messageContent: message.content },
+            'Failed to parse post message',
+          );
+          content = '[富文本消息]';
+        }
       } else if (messageType === 'file') {
         content = '[文件]';
       } else if (messageType === 'audio') {
