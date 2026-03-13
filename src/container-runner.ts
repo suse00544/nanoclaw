@@ -246,7 +246,10 @@ function buildContainerArgs(
     args.push('-e', `TOS_ACCESS_KEY_ID=${process.env.TOS_ACCESS_KEY_ID}`);
   }
   if (process.env.TOS_SECRET_ACCESS_KEY) {
-    args.push('-e', `TOS_SECRET_ACCESS_KEY=${process.env.TOS_SECRET_ACCESS_KEY}`);
+    args.push(
+      '-e',
+      `TOS_SECRET_ACCESS_KEY=${process.env.TOS_SECRET_ACCESS_KEY}`,
+    );
   }
   if (process.env.TOS_BUCKET) {
     args.push('-e', `TOS_BUCKET=${process.env.TOS_BUCKET}`);

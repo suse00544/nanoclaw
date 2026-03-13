@@ -287,7 +287,89 @@ export class FeishuChannel implements Channel {
           content = '[富文本消息]';
         }
       } else if (messageType === 'file') {
-        content = '[文件]';
+        try {
+          const fileContent = JSON.parse(message.content);
+          const fileKey = fileContent.file_key;
+          const fileName = fileContent.file_name || 'unknown_file';
+
+          logger.info(
+            { messageId, fileName, fileKey },
+            'Processing file message',
+          );
+
+          if (fileKey && this.client) {
+            const groupFolder = this.opts.registeredGroups()[chatJid]?.folder;
+
+            if (groupFolder) {
+              const fs = await import('fs');
+              const path = await import('path');
+              const groupPath = path.join(process.cwd(), 'groups', groupFolder);
+
+              // Create files directory
+              const filesDir = path.join(groupPath, 'files');
+              fs.mkdirSync(filesDir, { recursive: true });
+
+              const filePath = path.join(filesDir, `${messageId}_${fileName}`);
+
+              // Download file
+              const fileResp = await this.client.im.messageResource.get({
+                path: {
+                  message_id: messageId,
+                  file_key: fileKey,
+                },
+                params: {
+                  type: 'file',
+                },
+              });
+
+              await fileResp.writeFile(filePath);
+
+              logger.info({ messageId, fileName, filePath }, 'File downloaded');
+
+              // Add file as attachment
+              attachments.push({
+                type: 'file' as const,
+                path: filePath,
+                name: fileName,
+              });
+
+              content = `[文件: ${fileName}]\n<file path="${filePath}" />`;
+
+              // Auto-extract ZIP files
+              const ext = path.extname(fileName).toLowerCase();
+              if (['.zip', '.tar', '.gz', '.tgz', '.tar.gz'].includes(ext)) {
+                const extractDir = path.join(filesDir, `${messageId}_extracted`);
+                fs.mkdirSync(extractDir, { recursive: true });
+
+                try {
+                  const { execSync } = await import('child_process');
+                  if (ext === '.zip') {
+                    execSync(`unzip -o "${filePath}" -d "${extractDir}"`);
+                  } else {
+                    execSync(`tar -xf "${filePath}" -C "${extractDir}"`);
+                  }
+                  content += `\n[已解压到: ${extractDir}]`;
+                  logger.info({ extractDir }, 'Archive extracted');
+                } catch (extractErr) {
+                  logger.warn(
+                    { err: extractErr },
+                    'Failed to extract archive, file still available',
+                  );
+                }
+              }
+            }
+          }
+
+          if (!content || content === '[文件]') {
+            content = `[文件: ${fileContent.file_name || 'unknown'}] (下载失败)`;
+          }
+        } catch (err) {
+          logger.error(
+            { err, messageContent: message.content },
+            'Failed to process file message',
+          );
+          content = '[文件] (处理失败)';
+        }
       } else if (messageType === 'audio') {
         content = '[语音]';
       } else if (messageType === 'video') {
