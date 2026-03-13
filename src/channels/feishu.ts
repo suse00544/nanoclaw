@@ -311,14 +311,11 @@ export class FeishuChannel implements Channel {
 
               const filePath = path.join(filesDir, `${messageId}_${fileName}`);
 
-              // Download file
-              const fileResp = await this.client.im.messageResource.get({
+              // Download file using drive API
+              // Note: Files in messages need to be downloaded via drive.file API
+              const fileResp = await this.client.drive.file.download({
                 path: {
-                  message_id: messageId,
-                  file_key: fileKey,
-                },
-                params: {
-                  type: 'file',
+                  file_token: fileKey,
                 },
               });
 
@@ -338,7 +335,10 @@ export class FeishuChannel implements Channel {
               // Auto-extract ZIP files
               const ext = path.extname(fileName).toLowerCase();
               if (['.zip', '.tar', '.gz', '.tgz', '.tar.gz'].includes(ext)) {
-                const extractDir = path.join(filesDir, `${messageId}_extracted`);
+                const extractDir = path.join(
+                  filesDir,
+                  `${messageId}_extracted`,
+                );
                 fs.mkdirSync(extractDir, { recursive: true });
 
                 try {
