@@ -121,6 +121,7 @@ server.tool(
       };
     }
 
+    // @ts-ignore — optional dependency, not installed in container
     const { TosClient } = await import('@volcengine/tos-sdk');
 
     const client = new TosClient({

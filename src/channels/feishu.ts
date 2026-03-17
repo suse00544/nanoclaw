@@ -95,6 +95,45 @@ export class FeishuChannel implements Channel {
       const senderId = sender.sender_id.user_id || sender.sender_id.open_id;
       const senderName = sender.sender_id.user_id || 'Unknown';
 
+      // Fetch quoted message content if this is a reply
+      let quotedContext = '';
+      const parentId = message.parent_id || message.upper_message_id;
+      if (parentId && this.client) {
+        try {
+          const parentMsg = await this.client.im.message.get({
+            path: { message_id: parentId },
+          });
+          const parentItem = parentMsg.data?.items?.[0];
+          if (parentItem?.body?.content) {
+            const parsed = JSON.parse(parentItem.body.content);
+            let parentText = '';
+            if (typeof parsed.text === 'string') {
+              parentText = parsed.text;
+            } else {
+              // post message: extract text from nested structure
+              const post = parsed.zh_cn || parsed.en_us || parsed;
+              const paragraphs: any[][] = post.content || parsed.content || [];
+              if (Array.isArray(paragraphs)) {
+                parentText = paragraphs
+                  .map((para: any[]) =>
+                    Array.isArray(para)
+                      ? para.map((el: any) => el.text || '').join('')
+                      : '',
+                  )
+                  .join('\n')
+                  .trim();
+              }
+            }
+            if (parentText) {
+              quotedContext = `[引用消息] ${parentText}\n\n`;
+              logger.info({ parentId, parentText: parentText.slice(0, 100) }, 'Fetched quoted message');
+            }
+          }
+        } catch (err) {
+          logger.warn({ err, parentId }, 'Failed to fetch quoted message');
+        }
+      }
+
       // Parse message content based on type
       let content = '';
       const attachments: Array<{
@@ -381,6 +420,11 @@ export class FeishuChannel implements Channel {
         content = `[${messageType}]`;
       }
 
+      // Prepend quoted context if present
+      if (quotedContext) {
+        content = quotedContext + content;
+      }
+
       // Get chat name
       let chatName = chatJid;
       try {
@@ -401,14 +445,24 @@ export class FeishuChannel implements Channel {
       const isGroup = chatType === 'group';
       this.opts.onChatMetadata(chatJid, timestamp, chatName, 'feishu', isGroup);
 
-      // Check if this chat is registered
-      const group = this.opts.registeredGroups()[chatJid];
+      // Auto-register unregistered Feishu chats
+      let group = this.opts.registeredGroups()[chatJid];
       if (!group) {
-        logger.debug(
-          { chatJid, chatName },
-          'Message from unregistered Feishu chat',
+        const folderSuffix = chatId.slice(-8);
+        const folder = `feishu_${folderSuffix}`;
+        logger.info(
+          { chatJid, chatName, folder },
+          'Auto-registering new Feishu chat',
         );
-        return;
+        this.opts.registerGroup(chatJid, {
+          name: chatName || chatJid,
+          folder,
+          trigger: `@${ASSISTANT_NAME}`,
+          added_at: new Date().toISOString(),
+          requiresTrigger: false,
+          isMain: false,
+        });
+        group = this.opts.registeredGroups()[chatJid];
       }
 
       // Send OK emoji reaction to indicate message received and processing
@@ -453,35 +507,25 @@ export class FeishuChannel implements Channel {
   }
 
   async sendMessage(jid: string, text: string): Promise<void> {
-    logger.info({ jid, text }, 'sendMessage called');
+    logger.info({ jid, textLength: text.length }, 'sendMessage called');
 
     if (!this.client) {
       throw new Error('Feishu client not initialized');
     }
 
-    // Extract chat_id from JID (format: fs:chat_id)
     const chatId = jid.replace(/^fs:/, '');
-    logger.info({ chatId }, 'Sending to chat_id');
 
     try {
-      // Convert Markdown to Feishu post format for rich text rendering
-      const postContent = this.convertMarkdownToPost(text);
+      const processedText = this.normalizeFeishuMarkdown(text);
 
-      const result = await this.client.im.message.create({
-        params: {
-          receive_id_type: 'chat_id',
-        },
-        data: {
-          receive_id: chatId,
-          msg_type: 'post',
-          content: JSON.stringify({
-            zh_cn: postContent,
-          }),
-        },
-      });
+      if (this.shouldUseCard(processedText)) {
+        await this.sendCard(chatId, processedText);
+      } else {
+        await this.sendPost(chatId, processedText);
+      }
 
       logger.info(
-        { chatId, textLength: text.length, result },
+        { chatId, textLength: text.length },
         'Feishu message sent successfully',
       );
     } catch (err) {
@@ -490,134 +534,90 @@ export class FeishuChannel implements Channel {
     }
   }
 
-  /**
-   * Convert Markdown text to Feishu post format.
-   * Supports basic Markdown: bold, italic, code, code blocks, links.
-   */
-  private convertMarkdownToPost(text: string): any {
-    const lines = text.split('\n');
-    const content: any[][] = [];
-    let inCodeBlock = false;
-    let codeBlockLines: string[] = [];
-
-    for (const line of lines) {
-      // Handle code blocks
-      if (line.trim().startsWith('```')) {
-        if (inCodeBlock) {
-          // End of code block
-          content.push([
-            {
-              tag: 'text',
-              text: codeBlockLines.join('\n'),
-              style: ['code_inline'],
-            },
-          ]);
-          codeBlockLines = [];
-          inCodeBlock = false;
-        } else {
-          // Start of code block
-          inCodeBlock = true;
-        }
-        continue;
-      }
-
-      if (inCodeBlock) {
-        codeBlockLines.push(line);
-        continue;
-      }
-
-      // Parse inline Markdown in the line
-      const lineElements = this.parseInlineMarkdown(line);
-      if (lineElements.length > 0) {
-        content.push(lineElements);
-      }
-    }
-
-    return {
-      title: '',
-      content,
-    };
+  private shouldUseCard(text: string): boolean {
+    return /```[\s\S]*?```/.test(text) || /\|.+\|[\r\n]+\|[-:| ]+\|/.test(text);
   }
 
-  /**
-   * Parse inline Markdown (bold, italic, code, links) in a line.
-   */
-  private parseInlineMarkdown(line: string): any[] {
-    const elements: any[] = [];
-    let remaining = line;
-
-    // Simple regex-based parsing
-    // This is a basic implementation - can be enhanced for more complex cases
-    const patterns = [
-      { regex: /\*\*(.+?)\*\*/g, tag: 'text', style: ['bold'] },
-      { regex: /__(.+?)__/g, tag: 'text', style: ['bold'] },
-      { regex: /\*(.+?)\*/g, tag: 'text', style: ['italic'] },
-      { regex: /_(.+?)_/g, tag: 'text', style: ['italic'] },
-      { regex: /`(.+?)`/g, tag: 'text', style: ['code_inline'] },
-      { regex: /\[(.+?)\]\((.+?)\)/g, tag: 'a', isLink: true },
-    ];
-
-    // For simplicity, we'll process the entire line as segments
-    // A more robust solution would use a proper Markdown parser
-    let processedLine = line;
-    const segments: Array<{ text: string; style?: string[]; href?: string }> =
-      [];
-
-    // Replace bold
-    processedLine = processedLine.replace(/\*\*(.+?)\*\*/g, (match, p1) => {
-      segments.push({ text: p1, style: ['bold'] });
-      return `__SEGMENT_${segments.length - 1}__`;
-    });
-
-    // Replace italic
-    processedLine = processedLine.replace(/\*(.+?)\*/g, (match, p1) => {
-      segments.push({ text: p1, style: ['italic'] });
-      return `__SEGMENT_${segments.length - 1}__`;
-    });
-
-    // Replace code
-    processedLine = processedLine.replace(/`(.+?)`/g, (match, p1) => {
-      segments.push({ text: p1, style: ['code_inline'] });
-      return `__SEGMENT_${segments.length - 1}__`;
-    });
-
-    // Replace links
-    processedLine = processedLine.replace(
-      /\[(.+?)\]\((.+?)\)/g,
-      (match, text, href) => {
-        segments.push({ text, href });
-        return `__SEGMENT_${segments.length - 1}__`;
+  private async sendPost(chatId: string, text: string): Promise<void> {
+    await this.client!.im.message.create({
+      params: { receive_id_type: 'chat_id' },
+      data: {
+        receive_id: chatId,
+        msg_type: 'post',
+        content: JSON.stringify({
+          zh_cn: {
+            content: [[{ tag: 'md', text }]],
+          },
+        }),
       },
-    );
+    });
+  }
 
-    // Split by segment markers and reconstruct
-    const parts = processedLine.split(/(__SEGMENT_\d+__)/);
-    for (const part of parts) {
-      const segmentMatch = part.match(/__SEGMENT_(\d+)__/);
-      if (segmentMatch) {
-        const segment = segments[parseInt(segmentMatch[1])];
-        if (segment.href) {
-          elements.push({
-            tag: 'a',
-            text: segment.text,
-            href: segment.href,
-          });
-        } else {
-          elements.push({
-            tag: 'text',
-            text: segment.text,
-            style: segment.style,
-          });
-        }
-      } else if (part) {
-        elements.push({
-          tag: 'text',
-          text: part,
-        });
+  private async sendCard(chatId: string, text: string): Promise<void> {
+    const MAX_SIZE = 28000;
+    if (text.length > MAX_SIZE) {
+      const chunks = this.splitTextIntoChunks(text, MAX_SIZE);
+      for (const chunk of chunks) {
+        await this.sendSingleCard(chatId, chunk);
       }
+    } else {
+      await this.sendSingleCard(chatId, text);
     }
+  }
 
-    return elements.length > 0 ? elements : [{ tag: 'text', text: line }];
+  private async sendSingleCard(chatId: string, text: string): Promise<void> {
+    await this.client!.im.message.create({
+      params: { receive_id_type: 'chat_id' },
+      data: {
+        receive_id: chatId,
+        msg_type: 'interactive',
+        content: JSON.stringify({
+          schema: '2.0',
+          config: { wide_screen_mode: true },
+          body: {
+            elements: [{ tag: 'markdown', content: text }],
+          },
+        }),
+      },
+    });
+  }
+
+  private splitTextIntoChunks(text: string, maxSize: number): string[] {
+    const chunks: string[] = [];
+    let remaining = text;
+    while (remaining.length > 0) {
+      if (remaining.length <= maxSize) {
+        chunks.push(remaining);
+        break;
+      }
+      let splitIdx = remaining.lastIndexOf('\n\n', maxSize);
+      if (splitIdx < maxSize / 2) splitIdx = remaining.lastIndexOf('\n', maxSize);
+      if (splitIdx < maxSize / 2) splitIdx = maxSize;
+      chunks.push(remaining.substring(0, splitIdx));
+      remaining = remaining.substring(splitIdx).trimStart();
+    }
+    return chunks;
+  }
+
+  private normalizeFeishuMarkdown(text: string): string {
+    const parts = text.split(/(```[\s\S]*?```)/);
+    return parts.map((part, i) => {
+      if (i % 2 === 1) return part;
+      const inlineParts = part.split(/(`[^`]+`)/);
+      return inlineParts.map((p, j) => {
+        if (j % 2 === 1) return p;
+        return p.replace(
+          /(?<!\[.*?)(?<!\()https?:\/\/[^\s)\]>]+/g,
+          (url) => {
+            const safeUrl = url
+              .replace(/_/g, '%5F')
+              .replace(/\(/g, '%28')
+              .replace(/\)/g, '%29');
+            return `[${url}](${safeUrl})`;
+          },
+        );
+      }).join('');
+    }).join('');
   }
 
   /**

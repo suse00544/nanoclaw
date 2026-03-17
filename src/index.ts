@@ -108,6 +108,24 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
   // Create group folder
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
 
+  // Copy CLAUDE.md from main group for new non-main groups
+  // Skills are synced by container-runner at each container startup
+  if (!group.isMain) {
+    const mainGroup = Object.values(registeredGroups).find((g) => g.isMain);
+    if (mainGroup) {
+      try {
+        const mainDir = resolveGroupFolderPath(mainGroup.folder);
+        const claudeSrc = path.join(mainDir, 'CLAUDE.md');
+        const claudeDst = path.join(groupDir, 'CLAUDE.md');
+        if (fs.existsSync(claudeSrc) && !fs.existsSync(claudeDst)) {
+          fs.cpSync(claudeSrc, claudeDst);
+        }
+      } catch (err) {
+        logger.warn({ err }, 'Failed to copy CLAUDE.md from main group');
+      }
+    }
+  }
+
   logger.info(
     { jid, name: group.name, folder: group.folder },
     'Group registered',
@@ -517,6 +535,7 @@ async function main(): Promise<void> {
       isGroup?: boolean,
     ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
     registeredGroups: () => registeredGroups,
+    registerGroup,
   };
 
   // Create and connect all registered channels.

@@ -16,6 +16,7 @@ import {
   IDLE_TIMEOUT,
   TIMEZONE,
 } from './config.js';
+import { getAllRegisteredGroups } from './db.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -146,15 +147,35 @@ function buildVolumeMounts(
     );
   }
 
-  // Sync skills from container/skills/ into each group's .claude/skills/
-  const skillsSrc = path.join(process.cwd(), 'container', 'skills');
+  // Sync skills into each group's .claude/skills/
   const skillsDst = path.join(groupSessionsDir, 'skills');
-  if (fs.existsSync(skillsSrc)) {
-    for (const skillDir of fs.readdirSync(skillsSrc)) {
-      const srcDir = path.join(skillsSrc, skillDir);
+  fs.mkdirSync(skillsDst, { recursive: true });
+  // 1. Built-in skills from container/skills/
+  const builtinSkills = path.join(process.cwd(), 'container', 'skills');
+  if (fs.existsSync(builtinSkills)) {
+    for (const skillDir of fs.readdirSync(builtinSkills)) {
+      const srcDir = path.join(builtinSkills, skillDir);
       if (!fs.statSync(srcDir).isDirectory()) continue;
-      const dstDir = path.join(skillsDst, skillDir);
-      fs.cpSync(srcDir, dstDir, { recursive: true });
+      fs.cpSync(srcDir, path.join(skillsDst, skillDir), { recursive: true });
+    }
+  }
+  // 2. Sync skills from main group to non-main groups
+  if (!isMain) {
+    const mainGroup = Object.values(getAllRegisteredGroups()).find((g: RegisteredGroup) => g.isMain);
+    if (mainGroup) {
+      const mainSkills = path.join(
+        process.cwd(), 'data', 'sessions', mainGroup.folder, '.claude', 'skills',
+      );
+      if (fs.existsSync(mainSkills)) {
+        for (const skillDir of fs.readdirSync(mainSkills)) {
+          const srcDir = path.join(mainSkills, skillDir);
+          if (!fs.statSync(srcDir).isDirectory()) continue;
+          const dstDir = path.join(skillsDst, skillDir);
+          if (!fs.existsSync(dstDir)) {
+            fs.cpSync(srcDir, dstDir, { recursive: true });
+          }
+        }
+      }
     }
   }
   mounts.push({

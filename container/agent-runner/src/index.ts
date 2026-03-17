@@ -438,8 +438,34 @@ async function runQuery(
     const msgType = message.type === 'system' ? `system/${(message as { subtype?: string }).subtype}` : message.type;
     log(`[msg #${messageCount}] type=${msgType}`);
 
-    if (message.type === 'assistant' && 'uuid' in message) {
-      lastAssistantUuid = (message as { uuid: string }).uuid;
+    // Detailed trace logging
+    if (message.type === 'assistant') {
+      const msg = message as any;
+      if (msg.uuid) lastAssistantUuid = msg.uuid;
+
+      // Log tool use
+      if (msg.content && Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (block.type === 'tool_use') {
+            log(`[trace] tool_call: ${block.name} (id=${block.id})`);
+            const inputStr = JSON.stringify(block.input || {});
+            log(`[trace]   input: ${inputStr.slice(0, 300)}${inputStr.length > 300 ? '...' : ''}`);
+          } else if (block.type === 'text' && block.text) {
+            log(`[trace] assistant_text: ${block.text.slice(0, 200)}${block.text.length > 200 ? '...' : ''}`);
+          } else if (block.type === 'thinking' && block.thinking) {
+            log(`[trace] thinking: ${block.thinking.slice(0, 200)}${block.thinking.length > 200 ? '...' : ''}`);
+          }
+        }
+      }
+
+      // Log sub-agent / team messages
+      if (msg.message?.type === 'tool_result') {
+        const toolResult = msg.message;
+        log(`[trace] tool_result: id=${toolResult.tool_use_id}`);
+        if (typeof toolResult.content === 'string') {
+          log(`[trace]   result: ${toolResult.content.slice(0, 300)}${toolResult.content.length > 300 ? '...' : ''}`);
+        }
+      }
     }
 
     if (message.type === 'system' && message.subtype === 'init') {
