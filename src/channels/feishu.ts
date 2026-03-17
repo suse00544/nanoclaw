@@ -126,7 +126,10 @@ export class FeishuChannel implements Channel {
             }
             if (parentText) {
               quotedContext = `[引用消息] ${parentText}\n\n`;
-              logger.info({ parentId, parentText: parentText.slice(0, 100) }, 'Fetched quoted message');
+              logger.info(
+                { parentId, parentText: parentText.slice(0, 100) },
+                'Fetched quoted message',
+              );
             }
           }
         } catch (err) {
@@ -591,7 +594,8 @@ export class FeishuChannel implements Channel {
         break;
       }
       let splitIdx = remaining.lastIndexOf('\n\n', maxSize);
-      if (splitIdx < maxSize / 2) splitIdx = remaining.lastIndexOf('\n', maxSize);
+      if (splitIdx < maxSize / 2)
+        splitIdx = remaining.lastIndexOf('\n', maxSize);
       if (splitIdx < maxSize / 2) splitIdx = maxSize;
       chunks.push(remaining.substring(0, splitIdx));
       remaining = remaining.substring(splitIdx).trimStart();
@@ -601,23 +605,27 @@ export class FeishuChannel implements Channel {
 
   private normalizeFeishuMarkdown(text: string): string {
     const parts = text.split(/(```[\s\S]*?```)/);
-    return parts.map((part, i) => {
-      if (i % 2 === 1) return part;
-      const inlineParts = part.split(/(`[^`]+`)/);
-      return inlineParts.map((p, j) => {
-        if (j % 2 === 1) return p;
-        return p.replace(
-          /(?<!\[.*?)(?<!\()https?:\/\/[^\s)\]>]+/g,
-          (url) => {
-            const safeUrl = url
-              .replace(/_/g, '%5F')
-              .replace(/\(/g, '%28')
-              .replace(/\)/g, '%29');
-            return `[${url}](${safeUrl})`;
-          },
-        );
-      }).join('');
-    }).join('');
+    return parts
+      .map((part, i) => {
+        if (i % 2 === 1) return part;
+        const inlineParts = part.split(/(`[^`]+`)/);
+        return inlineParts
+          .map((p, j) => {
+            if (j % 2 === 1) return p;
+            return p.replace(
+              /(?<!\[.*?)(?<!\()https?:\/\/[^\s)\]>]+/g,
+              (url) => {
+                const safeUrl = url
+                  .replace(/_/g, '%5F')
+                  .replace(/\(/g, '%28')
+                  .replace(/\)/g, '%29');
+                return `[${url}](${safeUrl})`;
+              },
+            );
+          })
+          .join('');
+      })
+      .join('');
   }
 
   /**

@@ -161,10 +161,17 @@ function buildVolumeMounts(
   }
   // 2. Sync skills from main group to non-main groups
   if (!isMain) {
-    const mainGroup = Object.values(getAllRegisteredGroups()).find((g: RegisteredGroup) => g.isMain);
+    const mainGroup = Object.values(getAllRegisteredGroups()).find(
+      (g: RegisteredGroup) => g.isMain,
+    );
     if (mainGroup) {
       const mainSkills = path.join(
-        process.cwd(), 'data', 'sessions', mainGroup.folder, '.claude', 'skills',
+        process.cwd(),
+        'data',
+        'sessions',
+        mainGroup.folder,
+        '.claude',
+        'skills',
       );
       if (fs.existsSync(mainSkills)) {
         for (const skillDir of fs.readdirSync(mainSkills)) {
