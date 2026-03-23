@@ -8,6 +8,14 @@ import { Channel } from '../types.js';
 
 export interface FeishuChannelOpts extends ChannelOpts {}
 
+interface PendingReaction {
+  messageId: string;
+  reactionId: string;
+  emojiType: string;
+}
+
+const PROCESSING_EMOJI_TYPE = 'OneSecond';
+
 /**
  * Feishu/Lark channel implementation using WebSocket long connection.
  * Supports both group chats and private chats.
@@ -21,11 +29,77 @@ export class FeishuChannel implements Channel {
   private appId: string;
   private appSecret: string;
   private connected = false;
+  private lastEventTime = Date.now();
+  private healthCheckTimer: ReturnType<typeof setInterval> | null = null;
+  private pendingReactions = new Map<string, PendingReaction[]>();
 
   constructor(appId: string, appSecret: string, opts: FeishuChannelOpts) {
     this.appId = appId;
     this.appSecret = appSecret;
     this.opts = opts;
+  }
+
+  private async closeWsClient(): Promise<void> {
+    if (!this.wsClient) return;
+    try {
+      await this.wsClient.close();
+    } catch (err) {
+      logger.warn({ err }, 'Failed to close Feishu WebSocket client');
+    } finally {
+      this.wsClient = null;
+    }
+  }
+
+  private enqueuePendingReaction(
+    chatJid: string,
+    reaction: PendingReaction,
+  ): void {
+    const queue = this.pendingReactions.get(chatJid) || [];
+    queue.push(reaction);
+    this.pendingReactions.set(chatJid, queue);
+  }
+
+  private async clearPendingReaction(chatJid: string): Promise<void> {
+    if (!this.client) return;
+
+    const queue = this.pendingReactions.get(chatJid);
+    const reaction = queue?.shift();
+    if (!reaction) return;
+
+    if (!queue || queue.length === 0) {
+      this.pendingReactions.delete(chatJid);
+    } else {
+      this.pendingReactions.set(chatJid, queue);
+    }
+
+    try {
+      await this.client.im.messageReaction.delete({
+        path: {
+          message_id: reaction.messageId,
+          reaction_id: reaction.reactionId,
+        },
+      });
+      logger.debug(
+        {
+          chatJid,
+          messageId: reaction.messageId,
+          reactionId: reaction.reactionId,
+          emojiType: reaction.emojiType,
+        },
+        'Cleared Feishu processing reaction',
+      );
+    } catch (err) {
+      logger.warn(
+        {
+          err,
+          chatJid,
+          messageId: reaction.messageId,
+          reactionId: reaction.reactionId,
+          emojiType: reaction.emojiType,
+        },
+        'Failed to clear Feishu processing reaction',
+      );
+    }
   }
 
   async connect(): Promise<void> {
@@ -43,6 +117,7 @@ export class FeishuChannel implements Channel {
     // Register message receive event handler
     eventDispatcher.register({
       'im.message.receive_v1': async (data) => {
+        this.lastEventTime = Date.now();
         logger.info(
           { event: 'im.message.receive_v1', data },
           'Received Feishu message event',
@@ -66,7 +141,52 @@ export class FeishuChannel implements Channel {
     await this.wsClient.start({ eventDispatcher });
 
     this.connected = true;
+    this.lastEventTime = Date.now();
     logger.info('Feishu channel connected via WebSocket');
+
+    // Health check: reconnect WebSocket if no events received for 15 minutes
+    this.healthCheckTimer = setInterval(
+      async () => {
+        const silentMs = Date.now() - this.lastEventTime;
+        const silentMin = Math.round(silentMs / 60000);
+        if (silentMs > 15 * 60 * 1000) {
+          logger.warn(
+            { silentMin },
+            'No Feishu events for 15min, reconnecting WebSocket',
+          );
+          try {
+            // Only restart WebSocket, keep this.client alive for sending messages
+            await this.closeWsClient();
+            this.wsClient = new lark.WSClient({
+              appId: this.appId,
+              appSecret: this.appSecret,
+              loggerLevel: lark.LoggerLevel.warn,
+            });
+            const eventDispatcher = new lark.EventDispatcher({});
+            eventDispatcher.register({
+              'im.message.receive_v1': async (data) => {
+                this.lastEventTime = Date.now();
+                logger.info(
+                  { event: 'im.message.receive_v1', data },
+                  'Received Feishu message event',
+                );
+                try {
+                  await this.handleMessage(data);
+                } catch (err) {
+                  logger.error({ err }, 'Error handling Feishu message');
+                }
+              },
+            });
+            await this.wsClient.start({ eventDispatcher });
+            this.lastEventTime = Date.now();
+            logger.info('Feishu WebSocket reconnected successfully');
+          } catch (err) {
+            logger.error({ err }, 'Failed to reconnect Feishu WebSocket');
+          }
+        }
+      },
+      5 * 60 * 1000,
+    );
   }
 
   private async handleMessage(data: any): Promise<void> {
@@ -184,7 +304,7 @@ export class FeishuChannel implements Channel {
               const imagePath = path.join(
                 groupPath,
                 'images',
-                `${messageId}.png`,
+                `${messageId}_${imageKey}.png`,
               );
 
               // Write image using SDK's writeFile method
@@ -193,7 +313,7 @@ export class FeishuChannel implements Channel {
               attachments.push({
                 type: 'image' as const,
                 path: imagePath,
-                name: `${messageId}.png`,
+                name: `${messageId}_${imageKey}.png`,
               });
 
               content = '[图片]';
@@ -468,22 +588,38 @@ export class FeishuChannel implements Channel {
         group = this.opts.registeredGroups()[chatJid];
       }
 
-      // Send OK emoji reaction to indicate message received and processing
+      // Send a processing reaction to indicate the message is being handled.
       if (this.client) {
         try {
-          await this.client.im.messageReaction.create({
+          const reactionResp = await this.client.im.messageReaction.create({
             path: {
               message_id: messageId,
             },
             data: {
               reaction_type: {
-                emoji_type: 'OK',
+                emoji_type: PROCESSING_EMOJI_TYPE,
               },
             },
           });
-          logger.debug({ messageId }, 'Sent OK reaction');
+
+          const reactionId = reactionResp.data?.reaction_id;
+          if (reactionId) {
+            this.enqueuePendingReaction(chatJid, {
+              messageId,
+              reactionId,
+              emojiType: PROCESSING_EMOJI_TYPE,
+            });
+          }
+
+          logger.debug(
+            { messageId, reactionId, emojiType: PROCESSING_EMOJI_TYPE },
+            'Sent Feishu processing reaction',
+          );
         } catch (err) {
-          logger.warn({ err, messageId }, 'Failed to send OK reaction');
+          logger.warn(
+            { err, messageId, emojiType: PROCESSING_EMOJI_TYPE },
+            'Failed to send Feishu processing reaction',
+          );
         }
       }
 
@@ -519,6 +655,8 @@ export class FeishuChannel implements Channel {
     const chatId = jid.replace(/^fs:/, '');
 
     try {
+      await this.clearPendingReaction(jid);
+
       const processedText = this.normalizeFeishuMarkdown(text);
 
       if (this.shouldUseCard(processedText)) {
@@ -648,6 +786,8 @@ export class FeishuChannel implements Channel {
     const chatId = jid.replace(/^fs:/, '');
 
     try {
+      await this.clearPendingReaction(jid);
+
       // Check if file exists
       if (!fs.existsSync(filePath)) {
         throw new Error(`File not found: ${filePath}`);
@@ -748,10 +888,12 @@ export class FeishuChannel implements Channel {
     this.connected = false;
     this.client = null;
 
-    if (this.wsClient) {
-      await this.wsClient.stop();
-      this.wsClient = null;
+    if (this.healthCheckTimer) {
+      clearInterval(this.healthCheckTimer);
+      this.healthCheckTimer = null;
     }
+
+    await this.closeWsClient();
 
     logger.info('Feishu channel disconnected');
   }

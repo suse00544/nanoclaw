@@ -218,8 +218,12 @@ function buildVolumeMounts(
     group.folder,
     'agent-runner-src',
   );
-  if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
-    fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+  if (fs.existsSync(agentRunnerSrc)) {
+    fs.mkdirSync(groupAgentRunnerDir, { recursive: true });
+    fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, {
+      recursive: true,
+      force: true,
+    });
   }
   mounts.push({
     hostPath: groupAgentRunnerDir,
@@ -287,6 +291,11 @@ function buildContainerArgs(
   }
   if (process.env.TOS_ENDPOINT) {
     args.push('-e', `TOS_ENDPOINT=${process.env.TOS_ENDPOINT}`);
+  }
+
+  // Pass agent model override (e.g. MiniMax-M2.7)
+  if (process.env.NANOCLAW_AGENT_MODEL) {
+    args.push('-e', `NANOCLAW_AGENT_MODEL=${process.env.NANOCLAW_AGENT_MODEL}`);
   }
 
   // Run as host user so bind-mounted files are accessible.

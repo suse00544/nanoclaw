@@ -1,4 +1,6 @@
+import path from 'path';
 import { Channel, NewMessage } from './types.js';
+import { GROUPS_DIR } from './config.js';
 import { formatLocalTime } from './timezone.js';
 
 export function escapeXml(s: string): string {
@@ -10,9 +12,22 @@ export function escapeXml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+/**
+ * Convert a host-side image path to the corresponding container path.
+ * Host: {cwd}/groups/{folder}/images/xxx.png
+ * Container mount: groups/{folder} -> /workspace/group
+ * Container: /workspace/group/images/xxx.png
+ */
+function toContainerPath(hostPath: string, groupFolder: string): string {
+  const hostGroupDir = path.join(GROUPS_DIR, groupFolder);
+  const relPath = path.relative(hostGroupDir, hostPath);
+  return path.posix.join('/workspace/group', relPath);
+}
+
 export function formatMessages(
   messages: NewMessage[],
   timezone: string,
+  groupFolder?: string,
 ): string {
   const lines = messages.map((m) => {
     const displayTime = formatLocalTime(m.timestamp, timezone);
@@ -22,7 +37,12 @@ export function formatMessages(
     if (m.attachments && m.attachments.length > 0) {
       const imageAttachments = m.attachments
         .filter((att) => att.type === 'image')
-        .map((att) => `<image path="${escapeXml(att.path)}" />`)
+        .map((att) => {
+          const containerPath = groupFolder
+            ? toContainerPath(att.path, groupFolder)
+            : att.path;
+          return `<image path="${escapeXml(containerPath)}" />`;
+        })
         .join('');
       if (imageAttachments) {
         messageContent = `${messageContent}${imageAttachments}`;

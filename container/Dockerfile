@@ -30,6 +30,13 @@ RUN apt-get update && apt-get install -y \
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 ENV PATH="/home/node/.local/bin:$PATH"
+ENV NPM_CONFIG_PREFIX=/home/node/.local
+
+# Install mcporter and uv (persist across container restarts)
+RUN npm install -g mcporter \
+    && curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && mv /root/.local/bin/uv /root/.local/bin/uvx /home/node/.local/bin/ \
+    && chown node:node /home/node/.local/bin/uv /home/node/.local/bin/uvx
 
 # Install agent-browser and claude-code globally
 RUN npm install -g agent-browser @anthropic-ai/claude-code

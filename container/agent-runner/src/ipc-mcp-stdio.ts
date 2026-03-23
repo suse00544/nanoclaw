@@ -40,8 +40,8 @@ const server = new McpServer({
 });
 
 server.tool(
-  'send_message',
-  "Send a message to the user or group immediately while you're still running. Use this for progress updates or to send multiple messages. You can call this multiple times.",
+  'send_progress_update',
+  "Send a progress update to the user or group while you're still working. Use this only for updates that are intentionally separate from your normal final answer, such as a progress note during longer work, a partial status update before more work continues, or a standalone extra notification. Do not use this for normal one-shot replies, short acknowledgements, greetings, or routine conversational answers. Do not send a progress update here and then repeat the same or slightly reworded content in your final answer.",
   {
     text: z.string().describe('The message text to send'),
     sender: z.string().optional().describe('Your role/identity name (e.g. "Researcher"). When set, messages appear from a dedicated bot in Telegram.'),
@@ -183,7 +183,7 @@ If unsure which mode to use, you can ask the user. Examples:
 - "Follow up on my request" \u2192 group (needs to know what was requested)
 - "Generate a daily report" \u2192 isolated (just needs instructions in prompt)
 
-MESSAGING BEHAVIOR - The task agent's output is sent to the user or group. It can also use send_message for immediate delivery, or wrap output in <internal> tags to suppress it. Include guidance in the prompt about whether the agent should:
+MESSAGING BEHAVIOR - The task agent's output is sent to the user or group. It can also use send_progress_update for immediate delivery of separate progress updates, or wrap output in <internal> tags to suppress it. Include guidance in the prompt about whether the agent should:
 \u2022 Always send a message (e.g., reminders, daily briefings)
 \u2022 Only send a message when there's something to report (e.g., "notify me if...")
 \u2022 Never send a message (background maintenance tasks)
