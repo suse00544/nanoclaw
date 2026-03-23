@@ -1,9 +1,10 @@
-import { ChildProcess } from 'child_process';
+import { ChildProcess, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR, MAX_CONCURRENT_CONTAINERS } from './config.js';
 import { logger } from './logger.js';
+import { stopContainer } from './container-runtime.js';
 
 interface QueuedTask {
   id: string;
@@ -361,5 +362,31 @@ export class GroupQueue {
       { activeCount: this.activeCount, detachedContainers: activeContainers },
       'GroupQueue shutting down (containers detached, not killed)',
     );
+  }
+
+  /**
+   * Stop the container for a group by its folder name.
+   * Used for hot-reloading skills/mcps via IPC.
+   */
+  stopContainerByFolder(groupFolder: string): void {
+    for (const [jid, state] of Object.entries(this.groups)) {
+      if (state.groupFolder === groupFolder && state.containerName) {
+        logger.info(
+          { groupFolder, jid, containerName: state.containerName },
+          'Stopping container for hot reload',
+        );
+        try {
+          execSync(stopContainer(state.containerName), { stdio: 'pipe' });
+        } catch (err) {
+          logger.warn(
+            { err, containerName: state.containerName },
+            'Failed to stop container',
+          );
+        }
+        state.containerName = null;
+        return;
+      }
+    }
+    logger.warn({ groupFolder }, 'No active container found for group folder');
   }
 }

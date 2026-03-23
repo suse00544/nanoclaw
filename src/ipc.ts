@@ -24,6 +24,7 @@ export interface IpcDeps {
     registeredJids: Set<string>,
   ) => void;
   onTasksChanged: () => void;
+  stopGroupContainer: (groupFolder: string) => void;
 }
 
 let ipcWatcherRunning = false;
@@ -515,6 +516,12 @@ export async function processTaskIpc(
           'Invalid register_group request - missing required fields',
         );
       }
+      break;
+
+    case 'restart_container':
+      // Restart the container for this group (hot reload skills/mcps)
+      logger.info({ sourceGroup }, 'Restarting container via IPC');
+      deps.stopGroupContainer(sourceGroup);
       break;
 
     default:

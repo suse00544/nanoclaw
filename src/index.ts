@@ -678,6 +678,9 @@ async function main(): Promise<void> {
         writeTasksSnapshot(group.folder, group.isMain === true, taskRows);
       }
     },
+    stopGroupContainer: (groupFolder: string) => {
+      queue.stopContainerByFolder(groupFolder);
+    },
   });
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();

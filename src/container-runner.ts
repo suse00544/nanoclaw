@@ -16,7 +16,6 @@ import {
   IDLE_TIMEOUT,
   TIMEZONE,
 } from './config.js';
-import { getAllRegisteredGroups } from './db.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
@@ -150,40 +149,54 @@ function buildVolumeMounts(
   // Sync skills into each group's .claude/skills/
   const skillsDst = path.join(groupSessionsDir, 'skills');
   fs.mkdirSync(skillsDst, { recursive: true });
-  // 1. Built-in skills from container/skills/
-  const builtinSkills = path.join(process.cwd(), 'container', 'skills');
-  if (fs.existsSync(builtinSkills)) {
-    for (const skillDir of fs.readdirSync(builtinSkills)) {
-      const srcDir = path.join(builtinSkills, skillDir);
+  // Sync shared skills (不覆盖已有的，保护组自己的 skill)
+  const sharedSkills = path.join(DATA_DIR, 'shared-skills');
+  if (fs.existsSync(sharedSkills)) {
+    for (const skillDir of fs.readdirSync(sharedSkills)) {
+      const srcDir = path.join(sharedSkills, skillDir);
       if (!fs.statSync(srcDir).isDirectory()) continue;
-      fs.cpSync(srcDir, path.join(skillsDst, skillDir), { recursive: true });
-    }
-  }
-  // 2. Sync skills from main group to non-main groups
-  if (!isMain) {
-    const mainGroup = Object.values(getAllRegisteredGroups()).find(
-      (g: RegisteredGroup) => g.isMain,
-    );
-    if (mainGroup) {
-      const mainSkills = path.join(
-        process.cwd(),
-        'data',
-        'sessions',
-        mainGroup.folder,
-        '.claude',
-        'skills',
-      );
-      if (fs.existsSync(mainSkills)) {
-        for (const skillDir of fs.readdirSync(mainSkills)) {
-          const srcDir = path.join(mainSkills, skillDir);
-          if (!fs.statSync(srcDir).isDirectory()) continue;
-          const dstDir = path.join(skillsDst, skillDir);
-          if (!fs.existsSync(dstDir)) {
-            fs.cpSync(srcDir, dstDir, { recursive: true });
-          }
-        }
+      const dstDir = path.join(skillsDst, skillDir);
+      if (!fs.existsSync(dstDir)) {
+        fs.cpSync(srcDir, dstDir, { recursive: true });
       }
     }
+  }
+  // Sync shared MCPs into each group's mcporter.json
+  const sharedMcpsDir = path.join(DATA_DIR, 'shared-mcps');
+  if (fs.existsSync(sharedMcpsDir)) {
+    const groupMcporterPath = path.join(groupDir, 'config', 'mcporter.json');
+    let groupMcporter: Record<string, unknown> = {
+      mcpServers: {},
+      imports: [],
+    };
+    if (fs.existsSync(groupMcporterPath)) {
+      try {
+        groupMcporter = JSON.parse(fs.readFileSync(groupMcporterPath, 'utf-8'));
+      } catch {
+        // invalid JSON, start fresh
+      }
+    }
+    const mcpServers =
+      (groupMcporter.mcpServers as Record<string, unknown>) || {};
+    for (const mcpFile of fs.readdirSync(sharedMcpsDir)) {
+      if (!mcpFile.endsWith('.json')) continue;
+      const mcpPath = path.join(sharedMcpsDir, mcpFile);
+      try {
+        const mcpConfig = JSON.parse(fs.readFileSync(mcpPath, 'utf-8'));
+        const mcpName = mcpFile.replace('.json', '');
+        // Only add if not already present in group's mcporter
+        if (!mcpServers[mcpName]) {
+          mcpServers[mcpName] = mcpConfig;
+        }
+      } catch {
+        // skip invalid JSON
+      }
+    }
+    groupMcporter.mcpServers = mcpServers;
+    fs.writeFileSync(
+      groupMcporterPath,
+      JSON.stringify(groupMcporter, null, 2) + '\n',
+    );
   }
   mounts.push({
     hostPath: groupSessionsDir,
@@ -230,6 +243,24 @@ function buildVolumeMounts(
     containerPath: '/app/src',
     readonly: false,
   });
+
+  // Shared skills and mcps directories (read-write for all groups)
+  const sharedSkillsMount = path.join(DATA_DIR, 'shared-skills');
+  if (fs.existsSync(sharedSkillsMount)) {
+    mounts.push({
+      hostPath: sharedSkillsMount,
+      containerPath: '/workspace/shared-skills',
+      readonly: false,
+    });
+  }
+  const sharedMcpsMount = path.join(DATA_DIR, 'shared-mcps');
+  if (fs.existsSync(sharedMcpsMount)) {
+    mounts.push({
+      hostPath: sharedMcpsMount,
+      containerPath: '/workspace/shared-mcps',
+      readonly: false,
+    });
+  }
 
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
