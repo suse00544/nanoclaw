@@ -150,7 +150,7 @@ function buildVolumeMounts(
   const skillsDst = path.join(groupSessionsDir, 'skills');
   fs.mkdirSync(skillsDst, { recursive: true });
   // Sync shared skills (不覆盖已有的，保护组自己的 skill)
-  const sharedSkills = path.join(DATA_DIR, 'shared-skills');
+  const sharedSkills = path.join(DATA_DIR, 'sessions', 'shared-skills');
   if (fs.existsSync(sharedSkills)) {
     for (const skillDir of fs.readdirSync(sharedSkills)) {
       const srcDir = path.join(sharedSkills, skillDir);
@@ -162,9 +162,10 @@ function buildVolumeMounts(
     }
   }
   // Sync shared MCPs into each group's mcporter.json
-  const sharedMcpsDir = path.join(DATA_DIR, 'shared-mcps');
+  const sharedMcpsDir = path.join(DATA_DIR, 'sessions', 'shared-mcps');
   if (fs.existsSync(sharedMcpsDir)) {
-    const groupMcporterPath = path.join(groupDir, 'config', 'mcporter.json');
+    const groupConfigDir = path.join(groupDir, 'config');
+    const groupMcporterPath = path.join(groupConfigDir, 'mcporter.json');
     let groupMcporter: Record<string, unknown> = {
       mcpServers: {},
       imports: [],
@@ -193,6 +194,7 @@ function buildVolumeMounts(
       }
     }
     groupMcporter.mcpServers = mcpServers;
+    fs.mkdirSync(groupConfigDir, { recursive: true });
     fs.writeFileSync(
       groupMcporterPath,
       JSON.stringify(groupMcporter, null, 2) + '\n',
@@ -245,7 +247,7 @@ function buildVolumeMounts(
   });
 
   // Shared skills and mcps directories (read-write for all groups)
-  const sharedSkillsMount = path.join(DATA_DIR, 'shared-skills');
+  const sharedSkillsMount = path.join(DATA_DIR, 'sessions', 'shared-skills');
   if (fs.existsSync(sharedSkillsMount)) {
     mounts.push({
       hostPath: sharedSkillsMount,
@@ -253,7 +255,7 @@ function buildVolumeMounts(
       readonly: false,
     });
   }
-  const sharedMcpsMount = path.join(DATA_DIR, 'shared-mcps');
+  const sharedMcpsMount = path.join(DATA_DIR, 'sessions', 'shared-mcps');
   if (fs.existsSync(sharedMcpsMount)) {
     mounts.push({
       hostPath: sharedMcpsMount,

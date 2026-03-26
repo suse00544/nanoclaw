@@ -660,7 +660,13 @@ export class FeishuChannel implements Channel {
       const processedText = this.normalizeFeishuMarkdown(text);
 
       if (this.shouldUseCard(processedText)) {
-        await this.sendCard(chatId, processedText);
+        try {
+          await this.sendCard(chatId, processedText);
+        } catch (cardErr) {
+          // Card failed (e.g., table limit 11310), fall back to post
+          logger.warn({ err: cardErr, chatId }, 'Card send failed, falling back to post');
+          await this.sendPost(chatId, processedText);
+        }
       } else {
         await this.sendPost(chatId, processedText);
       }
