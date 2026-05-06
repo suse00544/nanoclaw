@@ -26,6 +26,7 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
+import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -206,6 +207,22 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // Persist tool dotfiles (e.g. ~/.xiaohongshu-cli/cookies.json) across container restarts.
+  // Any directory under groups/{folder}/dotfiles/ is mounted to /home/node/{dirname}.
+  const dotfilesDir = path.join(groupDir, 'dotfiles');
+  if (fs.existsSync(dotfilesDir)) {
+    for (const entry of fs.readdirSync(dotfilesDir)) {
+      const entryPath = path.join(dotfilesDir, entry);
+      if (fs.statSync(entryPath).isDirectory()) {
+        mounts.push({
+          hostPath: entryPath,
+          containerPath: `/home/node/${entry}`,
+          readonly: false,
+        });
+      }
+    }
+  }
+
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = resolveGroupIpcPath(group.folder);
@@ -286,21 +303,36 @@ function buildContainerArgs(
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
-  // Route API traffic through the credential proxy (containers never see real secrets)
-  args.push(
-    '-e',
-    `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
-  );
+  const bedrockEnv = readEnvFile(['CLAUDE_CODE_USE_BEDROCK', 'AWS_BEARER_TOKEN_BEDROCK', 'AWS_REGION']);
+  const isBedrockMode = bedrockEnv.CLAUDE_CODE_USE_BEDROCK === '1';
 
-  // Mirror the host's auth method with a placeholder value.
-  // API key mode: SDK sends x-api-key, proxy replaces with real key.
-  // OAuth mode:   SDK exchanges placeholder token for temp API key,
-  //               proxy injects real OAuth token on that exchange request.
-  const authMode = detectAuthMode();
-  if (authMode === 'api-key') {
-    args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+  if (isBedrockMode) {
+    // Bedrock mode: pass AWS credentials directly into the container.
+    // The SDK talks to AWS endpoints directly — no credential proxy needed.
+    args.push('-e', 'CLAUDE_CODE_USE_BEDROCK=1');
+    if (bedrockEnv.AWS_BEARER_TOKEN_BEDROCK) {
+      args.push('-e', `AWS_BEARER_TOKEN_BEDROCK=${bedrockEnv.AWS_BEARER_TOKEN_BEDROCK}`);
+    }
+    if (bedrockEnv.AWS_REGION) {
+      args.push('-e', `AWS_REGION=${bedrockEnv.AWS_REGION}`);
+    }
   } else {
-    args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+    // Route API traffic through the credential proxy (containers never see real secrets)
+    args.push(
+      '-e',
+      `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
+    );
+
+    // Mirror the host's auth method with a placeholder value.
+    // API key mode: SDK sends x-api-key, proxy replaces with real key.
+    // OAuth mode:   SDK exchanges placeholder token for temp API key,
+    //               proxy injects real OAuth token on that exchange request.
+    const authMode = detectAuthMode();
+    if (authMode === 'api-key') {
+      args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+    } else {
+      args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+    }
   }
 
   // Runtime-specific args for host gateway resolution
@@ -326,9 +358,15 @@ function buildContainerArgs(
     args.push('-e', `TOS_ENDPOINT=${process.env.TOS_ENDPOINT}`);
   }
 
-  // Pass agent model override (e.g. MiniMax-M2.7)
-  if (process.env.NANOCLAW_AGENT_MODEL) {
-    args.push('-e', `NANOCLAW_AGENT_MODEL=${process.env.NANOCLAW_AGENT_MODEL}`);
+  // Pass agent model override (read from .env since process.env doesn't carry .env vars)
+  const modelEnv = readEnvFile(['NANOCLAW_AGENT_MODEL']);
+  const agentModel = modelEnv.NANOCLAW_AGENT_MODEL || process.env.NANOCLAW_AGENT_MODEL;
+  if (agentModel) {
+    args.push('-e', `NANOCLAW_AGENT_MODEL=${agentModel}`);
+    if (isBedrockMode) {
+      // Claude Code CLI on Bedrock uses ANTHROPIC_MODEL to select the model
+      args.push('-e', `ANTHROPIC_MODEL=${agentModel}`);
+    }
   }
 
   // Run as host user so bind-mounted files are accessible.

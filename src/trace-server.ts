@@ -5,15 +5,31 @@
 import { createServer } from 'http';
 import path from 'path';
 import fs from 'fs';
-import Database from 'better-sqlite3';
 
-import { GROUPS_DIR, STORE_DIR } from './config.js';
+import { GROUPS_DIR, DATA_DIR } from './config.js';
 import { logger } from './logger.js';
 
 const TRACE_PORT = 18765;
 
-function openDb(): Database.Database {
-  return new Database(path.join(STORE_DIR, 'messages.db'), { readonly: true });
+interface TraceEvent {
+  type: 'message_start' | 'message_end' | 'tool_call' | 'tool_result' | 'thinking' | 'text' | 'result' | 'session_start' | 'session_end';
+  timestamp: string;
+  trace_id?: string;
+  message_id?: string;
+  parent_id?: string;
+  name?: string;
+  input?: any;
+  output?: any;
+  content?: string;
+  level?: 'INFO' | 'WARN' | 'ERROR';
+  duration_ms?: number;
+}
+
+interface StructuredTrace {
+  id: string;
+  startTime: string;
+  endTime: string;
+  events: TraceEvent[];
 }
 
 interface TraceMessage {
@@ -26,55 +42,55 @@ interface TraceMessage {
 
 interface Trace {
   id: string;
+  name: string;
   startTime: string;
   endTime: string;
-  messageCount: number;
-  preview: string;
+  size?: number;
 }
 
-// Group messages into traces by time gap (> 30 min = new trace)
-function groupIntoTraces(messages: any[]): Trace[] {
-  if (messages.length === 0) return [];
+// Read trace files from IPC runtime directory
+function getTraceFiles(folder: string): { name: string; mtime: number; size: number }[] {
+  const runtimeDir = path.join(DATA_DIR, 'ipc', folder, 'runtime');
+  if (!fs.existsSync(runtimeDir)) return [];
 
-  const traces: Trace[] = [];
-  let currentTrace: { messages: any[]; startTime: string; endTime: string } | null = null;
-
-  for (const msg of messages) {
-    const msgTime = new Date(msg.timestamp).getTime();
-
-    if (!currentTrace) {
-      currentTrace = { messages: [msg], startTime: msg.timestamp, endTime: msg.timestamp };
-    } else {
-      const lastTime = new Date(currentTrace.endTime).getTime();
-      if (msgTime - lastTime > 30 * 60 * 1000) {
-        // Gap > 30 min, start new trace
-        traces.push({
-          id: currentTrace.messages[0].id,
-          startTime: currentTrace.startTime,
-          endTime: currentTrace.endTime,
-          messageCount: currentTrace.messages.length,
-          preview: currentTrace.messages[0].content.slice(0, 60),
-        });
-        currentTrace = { messages: [msg], startTime: msg.timestamp, endTime: msg.timestamp };
-      } else {
-        currentTrace.messages.push(msg);
-        currentTrace.endTime = msg.timestamp;
-      }
-    }
+  try {
+    return fs.readdirSync(runtimeDir)
+      .filter(f => f.startsWith('trace-') && f.endsWith('.jsonl'))
+      .map(f => {
+        const stat = fs.statSync(path.join(runtimeDir, f));
+        return { name: f, mtime: stat.mtimeMs, size: stat.size };
+      })
+      .sort((a, b) => b.mtime - a.mtime); // Newest first
+  } catch {
+    return [];
   }
+}
 
-  // Push last trace
-  if (currentTrace) {
-    traces.push({
-      id: currentTrace.messages[0].id,
-      startTime: currentTrace.startTime,
-      endTime: currentTrace.endTime,
-      messageCount: currentTrace.messages.length,
-      preview: currentTrace.messages[0].content.slice(0, 60),
-    });
+function readTraceFile(folder: string, fileName: string): StructuredTrace | null {
+  const filePath = path.join(DATA_DIR, 'ipc', folder, 'runtime', fileName);
+  if (!fs.existsSync(filePath)) return null;
+
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const events: TraceEvent[] = content.split('\n')
+      .filter(line => line.trim())
+      .map(line => JSON.parse(line));
+
+    if (events.length === 0) return null;
+
+    const sessionEvent = events.find(e => e.type === 'session_start');
+    const firstEvent = events[0];
+    const lastEvent = events[events.length - 1];
+
+    return {
+      id: sessionEvent?.trace_id || fileName,
+      startTime: firstEvent?.timestamp || new Date().toISOString(),
+      endTime: lastEvent?.timestamp || new Date().toISOString(),
+      events,
+    };
+  } catch {
+    return null;
   }
-
-  return traces.reverse(); // Newest first
 }
 
 const HTML = `<!DOCTYPE html>
@@ -421,9 +437,9 @@ export function startTraceServer(): void {
       try {
         const entries = fs.readdirSync(GROUPS_DIR, { withFileTypes: true });
         const groups = entries
-          .filter(e => e.isDirectory())
-          .map(e => ({ name: e.name, folder: e.name }))
-          .filter(g => !g.folder.startsWith('.'));
+          .filter((e) => e.isDirectory())
+          .map((e) => ({ name: e.name, folder: e.name }))
+          .filter((g) => !g.folder.startsWith('.'));
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(groups));
       } catch (err) {
@@ -438,26 +454,14 @@ export function startTraceServer(): void {
     if (tracesMatch && req.method === 'GET') {
       const folder = tracesMatch[1];
       try {
-        const db = openDb();
-        // Find chat_jid for this folder
-        const groupRow = db.prepare(
-          "SELECT jid FROM registered_groups WHERE folder = ?"
-        ).get(folder) as { jid: string } | undefined;
-
-        if (!groupRow) {
-          db.close();
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify([]));
-          return;
-        }
-
-        const messages = db.prepare(
-          "SELECT * FROM messages WHERE chat_jid = ? ORDER BY timestamp ASC"
-        ).all(groupRow.jid) as any[];
-
-        db.close();
-
-        const traces = groupIntoTraces(messages);
+        const traceFiles = getTraceFiles(folder);
+        const traces = traceFiles.map(f => ({
+          id: f.name.replace('trace-', '').replace('.jsonl', ''),
+          name: f.name,
+          startTime: new Date(f.mtime).toISOString(),
+          endTime: new Date(f.mtime).toISOString(),
+          size: f.size,
+        }));
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(traces));
       } catch (err) {
@@ -467,81 +471,21 @@ export function startTraceServer(): void {
       return;
     }
 
-    // Get trace details: /api/traces/:folder/:traceId
+    // Get trace details: /api/traces/:folder/:traceId (traceId is the filename)
     const detailMatch = url.pathname.match(/^\/api\/traces\/([^/]+)\/(.+)$/);
     if (detailMatch && req.method === 'GET') {
       const folder = detailMatch[1];
       const traceId = decodeURIComponent(detailMatch[2]);
-      try {
-        const db = openDb();
-        const groupRow = db.prepare(
-          "SELECT jid FROM registered_groups WHERE folder = ?"
-        ).get(folder) as { jid: string } | undefined;
-
-        if (!groupRow) {
-          db.close();
-          res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Group not found' }));
-          return;
-        }
-
-        // Get all messages for this chat
-        const messages = db.prepare(
-          "SELECT * FROM messages WHERE chat_jid = ? ORDER BY timestamp ASC"
-        ).all(groupRow.jid) as any[];
-
-        db.close();
-
-        // Group into traces and find the specific one
-        if (messages.length === 0) {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ messages: [] }));
-          return;
-        }
-
-        let currentTrace: { messages: any[]; startTime: string; endTime: string } | null = null;
-        const traces: { id: string; messages: any[] }[] = [];
-
-        for (const msg of messages) {
-          const msgTime = new Date(msg.timestamp).getTime();
-
-          if (!currentTrace) {
-            currentTrace = { messages: [msg], startTime: msg.timestamp, endTime: msg.timestamp };
-          } else {
-            const lastTime = new Date(currentTrace.endTime).getTime();
-            if (msgTime - lastTime > 30 * 60 * 1000) {
-              traces.push({
-                id: currentTrace.messages[0].id,
-                messages: currentTrace.messages,
-              });
-              currentTrace = { messages: [msg], startTime: msg.timestamp, endTime: msg.timestamp };
-            } else {
-              currentTrace.messages.push(msg);
-              currentTrace.endTime = msg.timestamp;
-            }
-          }
-        }
-        if (currentTrace) {
-          traces.push({
-            id: currentTrace.messages[0].id,
-            messages: currentTrace.messages,
-          });
-        }
-
-        // Find trace by ID
-        const found = traces.find(t => t.id === traceId);
-        if (!found) {
-          res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Trace not found' }));
-          return;
-        }
-
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ messages: found.messages }));
-      } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: String(err) }));
+      // traceId is the filename like "2026-03-25T08-32-29-250Z.jsonl"
+      const fileName = traceId.endsWith('.jsonl') ? traceId : `${traceId}.jsonl`;
+      const trace = readTraceFile(folder, fileName);
+      if (!trace) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Trace not found' }));
+        return;
       }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(trace));
       return;
     }
 

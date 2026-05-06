@@ -664,7 +664,10 @@ export class FeishuChannel implements Channel {
           await this.sendCard(chatId, processedText);
         } catch (cardErr) {
           // Card failed (e.g., table limit 11310), fall back to post
-          logger.warn({ err: cardErr, chatId }, 'Card send failed, falling back to post');
+          logger.warn(
+            { err: cardErr, chatId },
+            'Card send failed, falling back to post',
+          );
           await this.sendPost(chatId, processedText);
         }
       } else {

@@ -57,6 +57,146 @@ interface SDKUserMessage {
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
+const IPC_RUNTIME_DIR = '/workspace/ipc/runtime';
+
+/**
+ * Structured trace event types for Langfuse-style tracing
+ */
+interface TraceEvent {
+  type: 'message_start' | 'message_end' | 'tool_call' | 'tool_result' | 'thinking' | 'text' | 'result' | 'session_start' | 'session_end';
+  timestamp: string;
+  trace_id?: string;
+  message_id?: string;
+  parent_id?: string;
+  name?: string;
+  input?: any;
+  output?: any;
+  content?: string;
+  level?: 'INFO' | 'WARN' | 'ERROR';
+  duration_ms?: number;
+}
+
+class TraceWriter {
+  private filePath: string;
+  private writeStream: fs.WriteStream;
+  public sessionId: string;
+  private messageCounter = 0;
+  private currentMessageId: string | null = null;
+
+  constructor(sessionId: string) {
+    this.sessionId = sessionId;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const traceFileName = `trace-${timestamp}.jsonl`;
+    this.filePath = path.join(IPC_RUNTIME_DIR, traceFileName);
+
+    // Ensure runtime dir exists
+    fs.mkdirSync(IPC_RUNTIME_DIR, { recursive: true });
+
+    this.writeStream = fs.createWriteStream(this.filePath, { flags: 'a' });
+    this.writeEvent({
+      type: 'session_start',
+      timestamp: new Date().toISOString(),
+      trace_id: this.sessionId,
+      name: 'agent_session',
+    });
+  }
+
+  private writeEvent(event: TraceEvent): void {
+    event.trace_id = this.sessionId;
+    this.writeStream.write(JSON.stringify(event) + '\n');
+  }
+
+  startMessage(): string {
+    this.messageCounter++;
+    this.currentMessageId = `msg_${this.messageCounter}`;
+    this.writeEvent({
+      type: 'message_start',
+      timestamp: new Date().toISOString(),
+      trace_id: this.sessionId,
+      message_id: this.currentMessageId,
+    });
+    return this.currentMessageId;
+  }
+
+  endMessage(): void {
+    if (this.currentMessageId) {
+      this.writeEvent({
+        type: 'message_end',
+        timestamp: new Date().toISOString(),
+        trace_id: this.sessionId,
+        message_id: this.currentMessageId,
+      });
+      this.currentMessageId = null;
+    }
+  }
+
+  toolCall(id: string, name: string, input: any): void {
+    this.writeEvent({
+      type: 'tool_call',
+      timestamp: new Date().toISOString(),
+      trace_id: this.sessionId,
+      message_id: this.currentMessageId || undefined,
+      name,
+      input,
+    });
+  }
+
+  toolResult(toolUseId: string, content: string): void {
+    this.writeEvent({
+      type: 'tool_result',
+      timestamp: new Date().toISOString(),
+      trace_id: this.sessionId,
+      message_id: this.currentMessageId || undefined,
+      parent_id: toolUseId,
+      output: content.slice(0, 1000), // Truncate for storage
+    });
+  }
+
+  thinking(content: string): void {
+    this.writeEvent({
+      type: 'thinking',
+      timestamp: new Date().toISOString(),
+      trace_id: this.sessionId,
+      message_id: this.currentMessageId || undefined,
+      content: content.slice(0, 2000), // Truncate for storage
+    });
+  }
+
+  text(content: string): void {
+    this.writeEvent({
+      type: 'text',
+      timestamp: new Date().toISOString(),
+      trace_id: this.sessionId,
+      message_id: this.currentMessageId || undefined,
+      content: content.slice(0, 2000),
+    });
+  }
+
+  result(content: string, status: 'success' | 'error'): void {
+    this.writeEvent({
+      type: 'result',
+      timestamp: new Date().toISOString(),
+      trace_id: this.sessionId,
+      message_id: this.currentMessageId || undefined,
+      content: content.slice(0, 1000),
+      level: status === 'error' ? 'ERROR' : 'INFO',
+    });
+  }
+
+  close(): void {
+    this.writeEvent({
+      type: 'session_end',
+      timestamp: new Date().toISOString(),
+      trace_id: this.sessionId,
+      name: 'agent_session',
+    });
+    this.writeStream.end();
+  }
+
+  getFilePath(): string {
+    return this.filePath;
+  }
+}
 
 /**
  * Push-based async iterable for streaming user messages to the SDK.
@@ -335,6 +475,7 @@ async function runQuery(
   mcpServerPath: string,
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
+  traceWriter: TraceWriter,
   resumeAt?: string,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
   log(`*** MODEL: ${process.env.NANOCLAW_AGENT_MODEL || 'claude-opus-4-6'} ***`);
@@ -367,11 +508,19 @@ async function runQuery(
   let messageCount = 0;
   let resultCount = 0;
 
-  // Load global CLAUDE.md as additional system context (shared across all groups)
+  // Build system prompt append: global first, then group-specific (group takes priority)
   const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
+  const groupClaudeMdPath = '/workspace/group/CLAUDE.md';
   let globalClaudeMd: string | undefined;
-  if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
-    globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
+  if (!containerInput.isMain) {
+    const parts: string[] = [];
+    if (fs.existsSync(globalClaudeMdPath)) {
+      parts.push(fs.readFileSync(globalClaudeMdPath, 'utf-8'));
+    }
+    if (fs.existsSync(groupClaudeMdPath)) {
+      parts.push(fs.readFileSync(groupClaudeMdPath, 'utf-8'));
+    }
+    if (parts.length > 0) globalClaudeMd = parts.join('\n\n---\n\n');
   }
 
   // Discover additional directories mounted at /workspace/extra/*
@@ -446,13 +595,11 @@ async function runQuery(
       if (msg.content && Array.isArray(msg.content)) {
         for (const block of msg.content) {
           if (block.type === 'tool_use') {
-            log(`[trace] tool_call: ${block.name} (id=${block.id})`);
-            const inputStr = JSON.stringify(block.input || {});
-            log(`[trace]   input: ${inputStr.slice(0, 300)}${inputStr.length > 300 ? '...' : ''}`);
+            traceWriter.toolCall(block.id, block.name, block.input || {});
           } else if (block.type === 'text' && block.text) {
-            log(`[trace] assistant_text: ${block.text.slice(0, 200)}${block.text.length > 200 ? '...' : ''}`);
+            traceWriter.text(block.text);
           } else if (block.type === 'thinking' && block.thinking) {
-            log(`[trace] thinking: ${block.thinking.slice(0, 200)}${block.thinking.length > 200 ? '...' : ''}`);
+            traceWriter.thinking(block.thinking);
           }
         }
       }
@@ -460,9 +607,8 @@ async function runQuery(
       // Log sub-agent / team messages
       if (msg.message?.type === 'tool_result') {
         const toolResult = msg.message;
-        log(`[trace] tool_result: id=${toolResult.tool_use_id}`);
         if (typeof toolResult.content === 'string') {
-          log(`[trace]   result: ${toolResult.content.slice(0, 300)}${toolResult.content.length > 300 ? '...' : ''}`);
+          traceWriter.toolResult(toolResult.tool_use_id, toolResult.content);
         }
       }
     }
@@ -481,6 +627,9 @@ async function runQuery(
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
       log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+      if (textResult) {
+        traceWriter.result(textResult, 'success');
+      }
       writeOutput({
         status: 'success',
         result: textResult || null,
@@ -537,13 +686,16 @@ async function main(): Promise<void> {
 
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
+  const traceWriter = new TraceWriter(sessionId || `session_${Date.now()}`);
+
   try {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, traceWriter, resumeAt);
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
+        traceWriter.sessionId = queryResult.newSessionId;
       }
       if (queryResult.lastAssistantUuid) {
         resumeAt = queryResult.lastAssistantUuid;
@@ -581,7 +733,8 @@ async function main(): Promise<void> {
       newSessionId: sessionId,
       error: errorMessage
     });
-    process.exit(1);
+  } finally {
+    traceWriter.close();
   }
 }
 
