@@ -17,8 +17,8 @@ interface PendingReaction {
 const PROCESSING_EMOJI_TYPE = 'OneSecond';
 
 /**
- * Feishu/Lark channel implementation using WebSocket long connection.
- * Supports both group chats and private chats.
+ * Feishu/Lark channel using WebSocket long connection.
+ * Supports group chats and private chats.
  */
 export class FeishuChannel implements Channel {
   name = 'feishu';
@@ -50,10 +50,22 @@ export class FeishuChannel implements Channel {
     }
   }
 
-  private enqueuePendingReaction(
-    chatJid: string,
-    reaction: PendingReaction,
-  ): void {
+  private buildEventDispatcher(): lark.EventDispatcher {
+    const dispatcher = new lark.EventDispatcher({});
+    dispatcher.register({
+      'im.message.receive_v1': async (data) => {
+        this.lastEventTime = Date.now();
+        try {
+          await this.handleMessage(data);
+        } catch (err) {
+          logger.error({ err }, 'Error handling Feishu message');
+        }
+      },
+    });
+    return dispatcher;
+  }
+
+  private enqueuePendingReaction(chatJid: string, reaction: PendingReaction): void {
     const queue = this.pendingReactions.get(chatJid) || [];
     queue.push(reaction);
     this.pendingReactions.set(chatJid, queue);
@@ -66,10 +78,10 @@ export class FeishuChannel implements Channel {
     const reaction = queue?.shift();
     if (!reaction) return;
 
-    if (!queue || queue.length === 0) {
-      this.pendingReactions.delete(chatJid);
-    } else {
+    if (queue && queue.length > 0) {
       this.pendingReactions.set(chatJid, queue);
+    } else {
+      this.pendingReactions.delete(chatJid);
     }
 
     try {
@@ -80,104 +92,54 @@ export class FeishuChannel implements Channel {
         },
       });
       logger.debug(
-        {
-          chatJid,
-          messageId: reaction.messageId,
-          reactionId: reaction.reactionId,
-          emojiType: reaction.emojiType,
-        },
+        { chatJid, messageId: reaction.messageId, reactionId: reaction.reactionId },
         'Cleared Feishu processing reaction',
       );
     } catch (err) {
       logger.warn(
-        {
-          err,
-          chatJid,
-          messageId: reaction.messageId,
-          reactionId: reaction.reactionId,
-          emojiType: reaction.emojiType,
-        },
+        { err, chatJid, messageId: reaction.messageId, reactionId: reaction.reactionId },
         'Failed to clear Feishu processing reaction',
       );
     }
   }
 
   async connect(): Promise<void> {
-    // Initialize Lark client
     this.client = new lark.Client({
       appId: this.appId,
       appSecret: this.appSecret,
       appType: lark.AppType.SelfBuild,
-      domain: lark.Domain.Feishu, // Use Lark for international, Feishu for China
+      domain: lark.Domain.Feishu,
     });
 
-    // Create event dispatcher for handling incoming events
-    const eventDispatcher = new lark.EventDispatcher({});
-
-    // Register message receive event handler
-    eventDispatcher.register({
-      'im.message.receive_v1': async (data) => {
-        this.lastEventTime = Date.now();
-        logger.info(
-          { event: 'im.message.receive_v1', data },
-          'Received Feishu message event',
-        );
-        try {
-          await this.handleMessage(data);
-        } catch (err) {
-          logger.error({ err }, 'Error handling Feishu message');
-        }
-      },
-    });
-
-    // Initialize WebSocket client for long connection
     this.wsClient = new lark.WSClient({
       appId: this.appId,
       appSecret: this.appSecret,
       loggerLevel: lark.LoggerLevel.warn,
     });
 
-    // Start WebSocket connection with event dispatcher
-    await this.wsClient.start({ eventDispatcher });
+    await this.wsClient.start({ eventDispatcher: this.buildEventDispatcher() });
 
     this.connected = true;
     this.lastEventTime = Date.now();
     logger.info('Feishu channel connected via WebSocket');
 
-    // Health check: reconnect WebSocket if no events received for 15 minutes
+    // Reconnect if silent for 15 minutes — WebSocket can silently drop
     this.healthCheckTimer = setInterval(
       async () => {
         const silentMs = Date.now() - this.lastEventTime;
-        const silentMin = Math.round(silentMs / 60000);
         if (silentMs > 15 * 60 * 1000) {
           logger.warn(
-            { silentMin },
+            { silentMin: Math.round(silentMs / 60000) },
             'No Feishu events for 15min, reconnecting WebSocket',
           );
           try {
-            // Only restart WebSocket, keep this.client alive for sending messages
             await this.closeWsClient();
             this.wsClient = new lark.WSClient({
               appId: this.appId,
               appSecret: this.appSecret,
               loggerLevel: lark.LoggerLevel.warn,
             });
-            const eventDispatcher = new lark.EventDispatcher({});
-            eventDispatcher.register({
-              'im.message.receive_v1': async (data) => {
-                this.lastEventTime = Date.now();
-                logger.info(
-                  { event: 'im.message.receive_v1', data },
-                  'Received Feishu message event',
-                );
-                try {
-                  await this.handleMessage(data);
-                } catch (err) {
-                  logger.error({ err }, 'Error handling Feishu message');
-                }
-              },
-            });
-            await this.wsClient.start({ eventDispatcher });
+            await this.wsClient.start({ eventDispatcher: this.buildEventDispatcher() });
             this.lastEventTime = Date.now();
             logger.info('Feishu WebSocket reconnected successfully');
           } catch (err) {
@@ -191,31 +153,22 @@ export class FeishuChannel implements Channel {
 
   private async handleMessage(data: any): Promise<void> {
     try {
-      logger.info({ data }, 'handleMessage called with data');
-
       const message = data.message;
       const sender = data.sender;
-      logger.info({ message, sender }, 'Extracted message and sender');
 
-      // Extract chat info
       const chatId = message.chat_id;
-      const chatType = message.chat_type; // 'p2p' or 'group'
+      const chatType = message.chat_type;
       const messageId = message.message_id;
-      const messageType = message.message_type; // 'text', 'image', 'file', etc.
+      const messageType = message.message_type;
       const timestamp = new Date(parseInt(message.create_time)).toISOString();
-      logger.info(
-        { chatId, chatType, messageId, messageType, timestamp },
-        'Extracted chat info',
-      );
 
-      // Build JID (Feishu format: fs:chat_id)
+      logger.info({ chatId, chatType, messageId, messageType }, 'Feishu message received');
+
       const chatJid = `fs:${chatId}`;
-
-      // Extract sender info
       const senderId = sender.sender_id.user_id || sender.sender_id.open_id;
       const senderName = sender.sender_id.user_id || 'Unknown';
 
-      // Fetch quoted message content if this is a reply
+      // Fetch quoted message if this is a reply
       let quotedContext = '';
       const parentId = message.parent_id || message.upper_message_id;
       if (parentId && this.client) {
@@ -236,9 +189,7 @@ export class FeishuChannel implements Channel {
               if (Array.isArray(paragraphs)) {
                 parentText = paragraphs
                   .map((para: any[]) =>
-                    Array.isArray(para)
-                      ? para.map((el: any) => el.text || '').join('')
-                      : '',
+                    Array.isArray(para) ? para.map((el: any) => el.text || '').join('') : '',
                   )
                   .join('\n')
                   .trim();
@@ -246,10 +197,7 @@ export class FeishuChannel implements Channel {
             }
             if (parentText) {
               quotedContext = `[引用消息] ${parentText}\n\n`;
-              logger.info(
-                { parentId, parentText: parentText.slice(0, 100) },
-                'Fetched quoted message',
-              );
+              logger.info({ parentId, parentText: parentText.slice(0, 100) }, 'Fetched quoted message');
             }
           }
         } catch (err) {
@@ -257,7 +205,6 @@ export class FeishuChannel implements Channel {
         }
       }
 
-      // Parse message content based on type
       let content = '';
       const attachments: Array<{
         type: 'image' | 'file' | 'video' | 'audio';
@@ -270,10 +217,7 @@ export class FeishuChannel implements Channel {
           const textContent = JSON.parse(message.content);
           content = textContent.text || '';
         } catch (err) {
-          logger.error(
-            { err, messageContent: message.content },
-            'Failed to parse Feishu text message',
-          );
+          logger.error({ err, messageContent: message.content }, 'Failed to parse Feishu text message');
           content = message.content;
         }
       } else if (messageType === 'image') {
@@ -282,68 +226,34 @@ export class FeishuChannel implements Channel {
           const imageKey = imageContent.image_key;
 
           if (imageKey && this.client) {
-            // Download image using messageResource API
             const imageResp = await this.client.im.messageResource.get({
-              path: {
-                message_id: messageId,
-                file_key: imageKey,
-              },
-              params: {
-                type: 'image',
-              },
+              path: { message_id: messageId, file_key: imageKey },
+              params: { type: 'image' },
             });
 
             const fs = await import('fs');
             const path = await import('path');
-
             const groupFolder = this.opts.registeredGroups()[chatJid]?.folder;
 
             if (groupFolder) {
               const groupPath = path.join(process.cwd(), 'groups', groupFolder);
               fs.mkdirSync(path.join(groupPath, 'images'), { recursive: true });
-              const imagePath = path.join(
-                groupPath,
-                'images',
-                `${messageId}_${imageKey}.png`,
-              );
-
-              // Write image using SDK's writeFile method
+              const imagePath = path.join(groupPath, 'images', `${messageId}_${imageKey}.png`);
               await imageResp.writeFile(imagePath);
-
-              attachments.push({
-                type: 'image' as const,
-                path: imagePath,
-                name: `${messageId}_${imageKey}.png`,
-              });
-
+              attachments.push({ type: 'image', path: imagePath, name: `${messageId}_${imageKey}.png` });
               content = '[图片]';
-              logger.info(
-                { messageId, imageKey, imagePath },
-                'Image downloaded and saved',
-              );
+              logger.info({ messageId, imageKey, imagePath }, 'Image downloaded and saved');
             }
           }
         } catch (err) {
-          logger.error(
-            { err, messageId, messageContent: message.content },
-            'Failed to download image',
-          );
+          logger.error({ err, messageId, messageContent: message.content }, 'Failed to download image');
           content = '[图片]';
         }
       } else if (messageType === 'post') {
         try {
-          logger.info(
-            { messageId, rawContent: message.content },
-            'Processing post message',
-          );
           const postContent = JSON.parse(message.content);
-          logger.info({ postContent }, 'Parsed post content');
-          // Post content might be nested under zh_cn/en_us, or directly at root
-          const post = postContent.content
-            ? postContent
-            : postContent.zh_cn || postContent.en_us || postContent;
-          logger.info({ post }, 'Selected post locale');
-
+          // post content may be nested under zh_cn/en_us or directly at root
+          const post = postContent.content ? postContent : postContent.zh_cn || postContent.en_us || postContent;
           const textParts: string[] = [];
 
           if (post.title) textParts.push(post.title);
@@ -357,95 +267,45 @@ export class FeishuChannel implements Channel {
                 case 'img':
                   if (element.image_key && this.client) {
                     try {
-                      // Download image using messageResource API
-                      const imageResp =
-                        await this.client.im.messageResource.get({
-                          path: {
-                            message_id: messageId,
-                            file_key: element.image_key,
-                          },
-                          params: {
-                            type: 'image',
-                          },
-                        });
-
+                      const imageResp = await this.client.im.messageResource.get({
+                        path: { message_id: messageId, file_key: element.image_key },
+                        params: { type: 'image' },
+                      });
                       const fs = await import('fs');
                       const path = await import('path');
-
-                      const groupFolder =
-                        this.opts.registeredGroups()[chatJid]?.folder;
-
+                      const groupFolder = this.opts.registeredGroups()[chatJid]?.folder;
                       if (groupFolder) {
-                        const groupPath = path.join(
-                          process.cwd(),
-                          'groups',
-                          groupFolder,
-                        );
-                        fs.mkdirSync(path.join(groupPath, 'images'), {
-                          recursive: true,
-                        });
-                        const imagePath = path.join(
-                          groupPath,
-                          'images',
-                          `${messageId}_${element.image_key}.png`,
-                        );
-
+                        const groupPath = path.join(process.cwd(), 'groups', groupFolder);
+                        fs.mkdirSync(path.join(groupPath, 'images'), { recursive: true });
+                        const imagePath = path.join(groupPath, 'images', `${messageId}_${element.image_key}.png`);
                         await imageResp.writeFile(imagePath);
-
-                        attachments.push({
-                          type: 'image' as const,
-                          path: imagePath,
-                          name: `${messageId}_${element.image_key}.png`,
-                        });
-
-                        logger.info(
-                          {
-                            messageId,
-                            imageKey: element.image_key,
-                            imagePath,
-                          },
-                          'Post image downloaded',
-                        );
+                        attachments.push({ type: 'image', path: imagePath, name: `${messageId}_${element.image_key}.png` });
+                        logger.info({ messageId, imageKey: element.image_key, imagePath }, 'Post image downloaded');
                       }
                     } catch (err) {
-                      logger.error(
-                        { err, messageId, imageKey: element.image_key },
-                        'Failed to download post image',
-                      );
+                      logger.error({ err, messageId, imageKey: element.image_key }, 'Failed to download post image');
                     }
                   }
                   break;
                 case 'a':
-                  if (element.text && element.href) {
-                    textParts.push(`[${element.text}](${element.href})`);
-                  }
+                  if (element.text && element.href) textParts.push(`[${element.text}](${element.href})`);
                   break;
                 case 'at':
-                  if (element.user_name) {
-                    textParts.push(`@${element.user_name}`);
-                  } else {
-                    textParts.push('@user');
-                  }
+                  textParts.push(element.user_name ? `@${element.user_name}` : '@user');
                   break;
               }
             }
             textParts.push('\n');
           }
 
-          // Add image references from attachments into the text content
           for (const att of attachments) {
-            if (att.type === 'image') {
-              textParts.push(`\n<image path="${att.path}" />`);
-            }
+            if (att.type === 'image') textParts.push(`\n<image path="${att.path}" />`);
           }
 
           content = textParts.join('').trim();
           if (!content) content = '[富文本消息]';
         } catch (err) {
-          logger.error(
-            { err, messageContent: message.content },
-            'Failed to parse post message',
-          );
+          logger.error({ err, messageContent: message.content }, 'Failed to parse post message');
           content = '[富文本消息]';
         }
       } else if (messageType === 'file') {
@@ -454,58 +314,32 @@ export class FeishuChannel implements Channel {
           const fileKey = fileContent.file_key;
           const fileName = fileContent.file_name || 'unknown_file';
 
-          logger.info(
-            { messageId, fileName, fileKey },
-            'Processing file message',
-          );
+          logger.info({ messageId, fileName, fileKey }, 'Processing file message');
 
           if (fileKey && this.client) {
             const groupFolder = this.opts.registeredGroups()[chatJid]?.folder;
-
             if (groupFolder) {
               const fs = await import('fs');
               const path = await import('path');
               const groupPath = path.join(process.cwd(), 'groups', groupFolder);
-
-              // Create files directory
               const filesDir = path.join(groupPath, 'files');
               fs.mkdirSync(filesDir, { recursive: true });
-
               const filePath = path.join(filesDir, `${messageId}_${fileName}`);
 
-              // Download file using messageResource API (same as image download)
               const fileResp = await this.client.im.messageResource.get({
-                path: {
-                  message_id: messageId,
-                  file_key: fileKey,
-                },
-                params: {
-                  type: 'file',
-                },
+                path: { message_id: messageId, file_key: fileKey },
+                params: { type: 'file' },
               });
-
               await fileResp.writeFile(filePath);
-
               logger.info({ messageId, fileName, filePath }, 'File downloaded');
 
-              // Add file as attachment
-              attachments.push({
-                type: 'file' as const,
-                path: filePath,
-                name: fileName,
-              });
-
+              attachments.push({ type: 'file', path: filePath, name: fileName });
               content = `[文件: ${fileName}]\n<file path="${filePath}" />`;
 
-              // Auto-extract ZIP files
               const ext = path.extname(fileName).toLowerCase();
               if (['.zip', '.tar', '.gz', '.tgz', '.tar.gz'].includes(ext)) {
-                const extractDir = path.join(
-                  filesDir,
-                  `${messageId}_extracted`,
-                );
+                const extractDir = path.join(filesDir, `${messageId}_extracted`);
                 fs.mkdirSync(extractDir, { recursive: true });
-
                 try {
                   const { execSync } = await import('child_process');
                   if (ext === '.zip') {
@@ -516,23 +350,17 @@ export class FeishuChannel implements Channel {
                   content += `\n[已解压到: ${extractDir}]`;
                   logger.info({ extractDir }, 'Archive extracted');
                 } catch (extractErr) {
-                  logger.warn(
-                    { err: extractErr },
-                    'Failed to extract archive, file still available',
-                  );
+                  logger.warn({ err: extractErr }, 'Failed to extract archive, file still available');
                 }
               }
             }
           }
 
-          if (!content || content === '[文件]') {
+          if (!content) {
             content = `[文件: ${fileContent.file_name || 'unknown'}] (下载失败)`;
           }
         } catch (err) {
-          logger.error(
-            { err, messageContent: message.content },
-            'Failed to process file message',
-          );
+          logger.error({ err, messageContent: message.content }, 'Failed to process file message');
           content = '[文件] (处理失败)';
         }
       } else if (messageType === 'audio') {
@@ -543,40 +371,28 @@ export class FeishuChannel implements Channel {
         content = `[${messageType}]`;
       }
 
-      // Prepend quoted context if present
-      if (quotedContext) {
-        content = quotedContext + content;
-      }
+      if (quotedContext) content = quotedContext + content;
 
-      // Get chat name
       let chatName = chatJid;
       try {
         if (chatType === 'p2p') {
           chatName = senderName;
         } else if (chatType === 'group' && this.client) {
-          // Fetch group name
-          const chatInfo = await this.client.im.chat.get({
-            path: { chat_id: chatId },
-          });
+          const chatInfo = await this.client.im.chat.get({ path: { chat_id: chatId } });
           chatName = chatInfo.data?.name || chatJid;
         }
       } catch (err) {
         logger.debug({ err, chatId }, 'Failed to fetch Feishu chat name');
       }
 
-      // Store chat metadata
       const isGroup = chatType === 'group';
       this.opts.onChatMetadata(chatJid, timestamp, chatName, 'feishu', isGroup);
 
-      // Auto-register unregistered Feishu chats
+      // Auto-register unregistered chats
       let group = this.opts.registeredGroups()[chatJid];
       if (!group) {
-        const folderSuffix = chatId.slice(-8);
-        const folder = `feishu_${folderSuffix}`;
-        logger.info(
-          { chatJid, chatName, folder },
-          'Auto-registering new Feishu chat',
-        );
+        const folder = `feishu_${chatId.slice(-8)}`;
+        logger.info({ chatJid, chatName, folder }, 'Auto-registering new Feishu chat');
         this.opts.registerGroup(chatJid, {
           name: chatName || chatJid,
           folder,
@@ -588,42 +404,22 @@ export class FeishuChannel implements Channel {
         group = this.opts.registeredGroups()[chatJid];
       }
 
-      // Send a processing reaction to indicate the message is being handled.
+      // Send processing reaction
       if (this.client) {
         try {
           const reactionResp = await this.client.im.messageReaction.create({
-            path: {
-              message_id: messageId,
-            },
-            data: {
-              reaction_type: {
-                emoji_type: PROCESSING_EMOJI_TYPE,
-              },
-            },
+            path: { message_id: messageId },
+            data: { reaction_type: { emoji_type: PROCESSING_EMOJI_TYPE } },
           });
-
           const reactionId = reactionResp.data?.reaction_id;
           if (reactionId) {
-            this.enqueuePendingReaction(chatJid, {
-              messageId,
-              reactionId,
-              emojiType: PROCESSING_EMOJI_TYPE,
-            });
+            this.enqueuePendingReaction(chatJid, { messageId, reactionId, emojiType: PROCESSING_EMOJI_TYPE });
           }
-
-          logger.debug(
-            { messageId, reactionId, emojiType: PROCESSING_EMOJI_TYPE },
-            'Sent Feishu processing reaction',
-          );
         } catch (err) {
-          logger.warn(
-            { err, messageId, emojiType: PROCESSING_EMOJI_TYPE },
-            'Failed to send Feishu processing reaction',
-          );
+          logger.warn({ err, messageId }, 'Failed to send Feishu processing reaction');
         }
       }
 
-      // Deliver message to processing loop
       this.opts.onMessage(chatJid, {
         id: messageId,
         chat_jid: chatJid,
@@ -635,19 +431,14 @@ export class FeishuChannel implements Channel {
         attachments: attachments.length > 0 ? attachments : undefined,
       });
 
-      logger.info(
-        { chatJid, chatName, sender: senderName },
-        'Feishu message stored',
-      );
+      logger.info({ chatJid, chatName, sender: senderName }, 'Feishu message stored');
     } catch (err) {
-      logger.error({ err, data }, 'Error in handleMessage');
+      logger.error({ err }, 'Error in handleMessage');
       throw err;
     }
   }
 
   async sendMessage(jid: string, text: string): Promise<void> {
-    logger.info({ jid, textLength: text.length }, 'sendMessage called');
-
     if (!this.client) {
       throw new Error('Feishu client not initialized');
     }
@@ -663,21 +454,15 @@ export class FeishuChannel implements Channel {
         try {
           await this.sendCard(chatId, processedText);
         } catch (cardErr) {
-          // Card failed (e.g., table limit 11310), fall back to post
-          logger.warn(
-            { err: cardErr, chatId },
-            'Card send failed, falling back to post',
-          );
+          // Card failed (e.g. table exceeds limit), fall back to post
+          logger.warn({ err: cardErr, chatId }, 'Card send failed, falling back to post');
           await this.sendPost(chatId, processedText);
         }
       } else {
         await this.sendPost(chatId, processedText);
       }
 
-      logger.info(
-        { chatId, textLength: text.length },
-        'Feishu message sent successfully',
-      );
+      logger.info({ chatId, textLength: text.length }, 'Feishu message sent successfully');
     } catch (err) {
       logger.error({ err, chatId }, 'Failed to send Feishu message');
       throw err;
@@ -694,11 +479,7 @@ export class FeishuChannel implements Channel {
       data: {
         receive_id: chatId,
         msg_type: 'post',
-        content: JSON.stringify({
-          zh_cn: {
-            content: [[{ tag: 'md', text }]],
-          },
-        }),
+        content: JSON.stringify({ zh_cn: { content: [[{ tag: 'md', text }]] } }),
       },
     });
   }
@@ -724,9 +505,7 @@ export class FeishuChannel implements Channel {
         content: JSON.stringify({
           schema: '2.0',
           config: { wide_screen_mode: true },
-          body: {
-            elements: [{ tag: 'markdown', content: text }],
-          },
+          body: { elements: [{ tag: 'markdown', content: text }] },
         }),
       },
     });
@@ -741,8 +520,7 @@ export class FeishuChannel implements Channel {
         break;
       }
       let splitIdx = remaining.lastIndexOf('\n\n', maxSize);
-      if (splitIdx < maxSize / 2)
-        splitIdx = remaining.lastIndexOf('\n', maxSize);
+      if (splitIdx < maxSize / 2) splitIdx = remaining.lastIndexOf('\n', maxSize);
       if (splitIdx < maxSize / 2) splitIdx = maxSize;
       chunks.push(remaining.substring(0, splitIdx));
       remaining = remaining.substring(splitIdx).trimStart();
@@ -759,16 +537,10 @@ export class FeishuChannel implements Channel {
         return inlineParts
           .map((p, j) => {
             if (j % 2 === 1) return p;
-            return p.replace(
-              /(?<!\[.*?)(?<!\()https?:\/\/[^\s)\]>]+/g,
-              (url) => {
-                const safeUrl = url
-                  .replace(/_/g, '%5F')
-                  .replace(/\(/g, '%28')
-                  .replace(/\)/g, '%29');
-                return `[${url}](${safeUrl})`;
-              },
-            );
+            return p.replace(/(?<!\[.*?)(?<!\()https?:\/\/[^\s)\]>]+/g, (url) => {
+              const safeUrl = url.replace(/_/g, '%5F').replace(/\(/g, '%28').replace(/\)/g, '%29');
+              return `[${url}](${safeUrl})`;
+            });
           })
           .join('');
       })
@@ -776,106 +548,62 @@ export class FeishuChannel implements Channel {
   }
 
   /**
-   * Send a file to a Feishu chat.
-   * Supports images, PDFs, documents, and other file types.
+   * Send a file or image to a Feishu chat.
    */
-  async sendFile(
-    jid: string,
-    filePath: string,
-    caption?: string,
-  ): Promise<void> {
+  async sendFile(jid: string, filePath: string, caption?: string): Promise<void> {
     if (!this.client) {
       throw new Error('Feishu client not initialized');
     }
 
     const fs = await import('fs');
     const path = await import('path');
-
-    // Extract chat_id from JID
     const chatId = jid.replace(/^fs:/, '');
 
     try {
       await this.clearPendingReaction(jid);
 
-      // Check if file exists
       if (!fs.existsSync(filePath)) {
         throw new Error(`File not found: ${filePath}`);
       }
 
-      // Read file
       const fileBuffer = fs.readFileSync(filePath);
       const fileName = path.basename(filePath);
       const fileExt = path.extname(filePath).toLowerCase();
-
-      // Determine file type
       const imageExts = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'];
       const isImage = imageExts.includes(fileExt);
 
-      // Upload file to Feishu
       logger.info({ filePath, fileName, isImage }, 'Uploading file to Feishu');
 
-      let fileKey: string;
       let msgType: string;
       let messageContent: string;
 
       if (isImage) {
-        // For images, use im.image.create to get image_key
         const uploadResult = await this.client.im.image.create({
-          data: {
-            image_type: 'message',
-            image: fileBuffer,
-          },
+          data: { image_type: 'message', image: fileBuffer },
         });
-
-        const imageKey =
-          (uploadResult as any)?.data?.image_key || uploadResult?.image_key;
-        if (!imageKey) {
-          throw new Error('Failed to upload image: no image_key returned');
-        }
-
-        fileKey = imageKey;
+        const imageKey = (uploadResult as any)?.data?.image_key || uploadResult?.image_key;
+        if (!imageKey) throw new Error('Failed to upload image: no image_key returned');
         msgType = 'image';
         messageContent = JSON.stringify({ image_key: imageKey });
         logger.info({ imageKey, fileName }, 'Image uploaded successfully');
       } else {
-        // For other files, use im.file.create to get file_key
         const uploadResult = await this.client.im.file.create({
-          data: {
-            file_type: 'stream',
-            file_name: fileName,
-            file: fileBuffer,
-          },
+          data: { file_type: 'stream', file_name: fileName, file: fileBuffer },
         });
-
-        const fKey =
-          (uploadResult as any)?.data?.file_key || uploadResult?.file_key;
-        if (!fKey) {
-          throw new Error('Failed to upload file: no file_key returned');
-        }
-
-        fileKey = fKey;
+        const fKey = (uploadResult as any)?.data?.file_key || uploadResult?.file_key;
+        if (!fKey) throw new Error('Failed to upload file: no file_key returned');
         msgType = 'file';
         messageContent = JSON.stringify({ file_key: fKey });
         logger.info({ fileKey: fKey, fileName }, 'File uploaded successfully');
       }
 
       await this.client.im.message.create({
-        params: {
-          receive_id_type: 'chat_id',
-        },
-        data: {
-          receive_id: chatId,
-          msg_type: msgType,
-          content: messageContent,
-        },
+        params: { receive_id_type: 'chat_id' },
+        data: { receive_id: chatId, msg_type: msgType, content: messageContent },
       });
 
-      logger.info(
-        { chatId, fileName, fileType: msgType },
-        'File sent successfully',
-      );
+      logger.info({ chatId, fileName, fileType: msgType }, 'File sent successfully');
 
-      // Send caption as a follow-up message if provided
       if (caption) {
         await this.sendMessage(jid, caption);
       }
@@ -903,15 +631,12 @@ export class FeishuChannel implements Channel {
     }
 
     await this.closeWsClient();
-
     logger.info('Feishu channel disconnected');
   }
 }
 
-// Channel factory with self-registration
 registerChannel('feishu', (opts: ChannelOpts) => {
   const env = readEnvFile(['FEISHU_APP_ID', 'FEISHU_APP_SECRET']);
-
   const appId = env.FEISHU_APP_ID;
   const appSecret = env.FEISHU_APP_SECRET;
 
