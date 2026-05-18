@@ -57,6 +57,7 @@ import {
   loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';
+import { startFollowUpLoop } from './follow-up-scheduler.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -636,6 +637,10 @@ async function main(): Promise<void> {
       const text = formatOutbound(rawText);
       if (text) await channel.sendMessage(jid, text);
     },
+  });
+  startFollowUpLoop({
+    registeredGroups: () => registeredGroups,
+    onTasksChanged: () => {},
   });
   startIpcWatcher({
     sendMessage: (jid, text) => {
