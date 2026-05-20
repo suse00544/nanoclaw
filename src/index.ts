@@ -231,6 +231,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
+  // Streaming card state — accumulates text across multiple outputs
+  let streamingCardId: string | null = null;
+  let streamingAccumulated = '';
+  const supportsStreaming = !!channel.startStreamingCard;
+
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
     if (result.result) {
@@ -238,18 +243,42 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         typeof result.result === 'string'
           ? result.result
           : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.length} chars`);
       if (text) {
-        await channel.sendMessage(chatJid, text);
+        if (supportsStreaming) {
+          // Create streaming card on first output
+          if (!streamingCardId) {
+            streamingCardId =
+              (await channel.startStreamingCard!(chatJid)) || null;
+          }
+          streamingAccumulated += (streamingAccumulated ? '\n\n' : '') + text;
+          if (streamingCardId) {
+            await channel.updateStreamingCard!(
+              chatJid,
+              streamingCardId,
+              streamingAccumulated,
+            );
+          } else {
+            await channel.sendMessage(chatJid, text);
+          }
+        } else {
+          await channel.sendMessage(chatJid, text);
+        }
         outputSentToUser = true;
       }
-      // Only reset idle timer on actual results, not session-update markers (result: null)
       resetIdleTimer();
     }
 
     if (result.status === 'success') {
+      // Finalize streaming card
+      if (streamingCardId && streamingAccumulated) {
+        await channel.finalizeStreamingCard!(
+          chatJid,
+          streamingCardId,
+          streamingAccumulated,
+        );
+      }
       queue.notifyIdle(chatJid);
     }
 
@@ -640,7 +669,21 @@ async function main(): Promise<void> {
   });
   startFollowUpLoop({
     registeredGroups: () => registeredGroups,
-    onTasksChanged: () => {},
+    onTasksChanged: () => {
+      const tasks = getAllTasks();
+      const taskRows = tasks.map((t) => ({
+        id: t.id,
+        groupFolder: t.group_folder,
+        prompt: t.prompt,
+        schedule_type: t.schedule_type,
+        schedule_value: t.schedule_value,
+        status: t.status,
+        next_run: t.next_run,
+      }));
+      for (const group of Object.values(registeredGroups)) {
+        writeTasksSnapshot(group.folder, group.isMain === true, taskRows);
+      }
+    },
   });
   startIpcWatcher({
     sendMessage: (jid, text) => {

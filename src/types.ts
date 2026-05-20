@@ -54,6 +54,7 @@ export interface NewMessage {
   chat_jid: string;
   sender: string;
   sender_name: string;
+  sender_open_id?: string;
   content: string;
   timestamp: string;
   is_from_me?: boolean;
@@ -100,6 +101,19 @@ export interface Channel {
   syncGroups?(force: boolean): Promise<void>;
   // Optional: send files (images, PDFs, documents, etc.)
   sendFile?(jid: string, filePath: string, caption?: string): Promise<void>;
+  // Optional: streaming card support (Feishu). Create a card, update it
+  // incrementally, and finalize when the agent is done.
+  startStreamingCard?(jid: string): Promise<string | null>;
+  updateStreamingCard?(
+    jid: string,
+    cardId: string,
+    text: string,
+  ): Promise<void>;
+  finalizeStreamingCard?(
+    jid: string,
+    cardId: string,
+    text: string,
+  ): Promise<void>;
 }
 
 // Callback type that channels use to deliver inbound messages
