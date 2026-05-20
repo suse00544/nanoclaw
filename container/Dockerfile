@@ -38,8 +38,8 @@ RUN npm install -g mcporter \
     && mv /root/.local/bin/uv /root/.local/bin/uvx /home/node/.local/bin/ \
     && chown node:node /home/node/.local/bin/uv /home/node/.local/bin/uvx
 
-# Install agent-browser and claude-code globally
-RUN npm install -g agent-browser @anthropic-ai/claude-code
+# Install agent-browser, claude-code, and lark-cli globally
+RUN npm install -g agent-browser @anthropic-ai/claude-code @larksuite/cli
 
 # Create app directory
 WORKDIR /app
@@ -66,7 +66,9 @@ RUN mkdir -p /workspace/group /workspace/global /workspace/extra /workspace/ipc/
 RUN printf '#!/bin/bash\nset -e\ncd /app && npx tsc --outDir /tmp/dist 2>&1 >&2\nln -s /app/node_modules /tmp/dist/node_modules\nchmod -R a-w /tmp/dist\ncat > /tmp/input.json\nnode /tmp/dist/index.js < /tmp/input.json\n' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 # Set ownership to node user (non-root) for writable directories
-RUN chown -R node:node /workspace && chmod 777 /home/node
+# /home/node/.local includes npm global packages; lark-cli needs to write
+# config/keyring data under /home/node/.local/share at runtime.
+RUN chown -R node:node /workspace /home/node/.local && chmod 777 /home/node
 
 # Switch to non-root user (required for --dangerously-skip-permissions)
 USER node
