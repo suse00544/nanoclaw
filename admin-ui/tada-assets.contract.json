@@ -1,0 +1,193 @@
+{
+  "version": 3,
+  "page": {
+    "composition": {
+      "profile": "operational",
+      "density": "standard",
+      "surfaces": ["canvas", "navigation", "summary", "work"],
+      "maxPersistentDepthChanges": 2,
+      "maxNestedSurfaceDepth": 1,
+      "primaryIdentity": {
+        "count": 1,
+        "visibleByDefault": true,
+        "helperCopy": "none"
+      },
+      "regions": [
+        {
+          "id": "navigation",
+          "role": "navigation",
+          "task": "navigate-dashboard",
+          "persistence": "persistent",
+          "grouping": "continuous"
+        },
+        {
+          "id": "runtime-summary",
+          "role": "summary",
+          "task": "assess-runtime",
+          "persistence": "persistent",
+          "grouping": "independent"
+        },
+        {
+          "id": "outcome-summary",
+          "role": "summary",
+          "task": "triage-failures",
+          "persistence": "persistent",
+          "grouping": "independent"
+        },
+        {
+          "id": "skill-inventory",
+          "role": "work",
+          "task": "inspect-baseline-skills",
+          "persistence": "persistent",
+          "grouping": "independent"
+        }
+      ],
+      "adjacencies": [
+        { "from": "navigation", "to": "runtime-summary", "method": "gutter" },
+        { "from": "runtime-summary", "to": "outcome-summary", "method": "gutter" },
+        { "from": "outcome-summary", "to": "skill-inventory", "method": "gutter" }
+      ],
+      "selectionCue": "surface-type-icon",
+      "spatialSystem": {
+        "geometryVersion": 1,
+        "pageGrid": {
+          "mode": "fixed-fluid",
+          "columns": 2,
+          "outerInset": "region",
+          "gutter": "region"
+        },
+        "visualBudget": {
+          "tintedPlanes": 1,
+          "elevatedLayers": 0
+        },
+        "anchors": [
+          "navigation",
+          "dashboard-header",
+          "runtime-summary",
+          "runtime-metrics",
+          "outcome-summary",
+          "outcome-metrics",
+          "skill-inventory",
+          "skill-search-shell",
+          "skill-search-leading",
+          "skill-search-trailing",
+          "skill-table"
+        ],
+        "alignmentLines": [
+          {
+            "id": "work-inline-start",
+            "axis": "inline-start",
+            "anchors": ["dashboard-header", "runtime-summary", "outcome-summary", "skill-inventory"],
+            "minSamples": 4,
+            "tolerance": 2
+          },
+          {
+            "id": "region-content-start",
+            "axis": "inline-start",
+            "anchors": ["runtime-metrics", "outcome-metrics", "skill-table"],
+            "minSamples": 3,
+            "tolerance": 2
+          }
+        ],
+        "spacingRelations": [
+          {
+            "id": "header-to-runtime",
+            "from": "dashboard-header",
+            "to": "runtime-summary",
+            "axis": "block",
+            "role": "region"
+          },
+          {
+            "id": "runtime-to-outcome",
+            "from": "runtime-summary",
+            "to": "outcome-summary",
+            "axis": "block",
+            "role": "region"
+          },
+          {
+            "id": "search-to-skill-table",
+            "from": "skill-search-shell",
+            "to": "skill-table",
+            "axis": "block",
+            "role": "section",
+            "compareTo": "runtime-to-outcome"
+          }
+        ],
+        "geometryChecks": [
+          {
+            "id": "search-shell-insets",
+            "type": "symmetric-inset",
+            "container": "skill-search-shell",
+            "children": ["skill-search-leading", "skill-search-trailing"],
+            "axes": ["inline"],
+            "tolerance": 2
+          }
+        ],
+        "groups": [
+          {
+            "id": "navigation-content",
+            "region": "navigation",
+            "contentKind": "content",
+            "relationship": "continuous",
+            "separation": "tinted-plane",
+            "planeRole": "context",
+            "statusExpression": "signal-only",
+            "escalationReason": "Persistent product and service context must remain distinct from the operational work surface."
+          },
+          {
+            "id": "runtime-metric-group",
+            "region": "runtime-summary",
+            "contentKind": "repeated-data",
+            "relationship": "repeated",
+            "separation": "line",
+            "planeRole": "base",
+            "statusExpression": "signal-only",
+            "escalationReason": "none"
+          },
+          {
+            "id": "outcome-metric-group",
+            "region": "outcome-summary",
+            "contentKind": "status",
+            "relationship": "repeated",
+            "separation": "line",
+            "planeRole": "base",
+            "statusExpression": "signal-only",
+            "escalationReason": "none"
+          },
+          {
+            "id": "skill-search-group",
+            "region": "skill-inventory",
+            "contentKind": "search",
+            "relationship": "continuous",
+            "separation": "line",
+            "planeRole": "base",
+            "statusExpression": "none",
+            "escalationReason": "none"
+          },
+          {
+            "id": "skill-table-group",
+            "region": "skill-inventory",
+            "contentKind": "repeated-data",
+            "relationship": "repeated",
+            "separation": "line",
+            "planeRole": "base",
+            "statusExpression": "signal-only",
+            "escalationReason": "none"
+          }
+        ],
+        "overlays": []
+      }
+    }
+  },
+  "groups": [],
+  "assetPools": [],
+  "uses": [
+    "action.search",
+    "status.failure",
+    "status.success",
+    "status.running",
+    "object.skill",
+    "font.ui",
+    "font.numerals"
+  ]
+}

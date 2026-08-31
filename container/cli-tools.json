@@ -1,0 +1,17 @@
+[
+  {
+    "name": "agent-browser",
+    "version": "0.27.1",
+    "onlyBuilt": true
+  },
+  {
+    "name": "@anthropic-ai/claude-code",
+    "version": "2.1.197",
+    "onlyBuilt": true
+  },
+  {
+    "name": "@larksuite/cli",
+    "version": "1.0.89",
+    "onlyBuilt": true
+  }
+]

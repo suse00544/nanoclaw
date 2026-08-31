@@ -1,0 +1,21 @@
+[Unit]
+Description=Apple verification code relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=apple-code-relay
+Group=apple-code-relay
+WorkingDirectory=/opt/apple-code-relay
+EnvironmentFile=/etc/apple-code-relay.env
+ExecStart=/usr/bin/node /opt/apple-code-relay/server.mjs
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+
+[Install]
+WantedBy=multi-user.target

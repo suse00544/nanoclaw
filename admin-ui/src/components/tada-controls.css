@@ -1,0 +1,48 @@
+.tada-visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.tada-button { min-height: 44px; margin: 0; padding: 0 var(--tada-space-5); border: 0; border-radius: var(--tada-radius-control); display: inline-flex; align-items: center; justify-content: center; gap: var(--tada-space-2); font-weight: 600; color: var(--tada-button-fg); background: var(--tada-button-bg); cursor: pointer; }
+.tada-button--primary { --tada-button-bg: var(--tada-action-primary); --tada-button-fg: var(--tada-text-on-primary); }
+.tada-button--secondary { --tada-button-bg: var(--tada-action-secondary); --tada-button-fg: var(--tada-text-primary); }
+.tada-button--tertiary { --tada-button-bg: var(--tada-color-button-bg-tertiary-default); --tada-button-fg: var(--tada-text-primary); }
+.tada-button--warning { --tada-button-bg: var(--tada-color-button-bg-warning-default); --tada-button-fg: var(--tada-color-button-text-warning-default); }
+.tada-button:disabled { opacity: .45; cursor: not-allowed; }
+.tada-button__icon { width: 20px; height: 20px; display: grid; place-items: center; }
+.tada-icon-button { width: 40px; min-width: 40px; padding: 0; }
+.tada-icon-button--dense { width: 36px; min-width: 36px; min-height: 36px; }
+.tada-icon-mask { display: block; width: 18px; height: 18px; background: currentColor; -webkit-mask: var(--tada-icon-url) center / contain no-repeat; mask: var(--tada-icon-url) center / contain no-repeat; }
+.tada-icon-mask--chevron { --tada-icon-url: url('/tada-assets/icon.chevron_down.svg'); width: 16px; height: 16px; }
+.tada-icon-mask--close { --tada-icon-url: url('/tada-assets/icon.close.svg'); }
+.tada-field, .tada-select { display: grid; gap: var(--tada-space-2); color: var(--tada-text-primary); }
+.tada-field__label, .tada-select__label { font-size: 13px; font-weight: 600; }
+.tada-field__shell { min-height: 44px; display: flex; align-items: center; border: 1px solid var(--tada-border-primary); border-radius: var(--tada-radius-control); background: var(--tada-surface-input); }
+.tada-field__shell:focus-within, .tada-select__trigger:focus-visible { border-color: var(--tada-accent-brand); box-shadow: 0 0 0 3px var(--tada-palette-tada-blue-100); outline: none; }
+.tada-field__shell--error { border-color: var(--tada-feedback-warning); }
+.tada-field__input { min-width: 0; flex: 1; height: 42px; padding: 0 var(--tada-space-4); border: 0; outline: 0; color: var(--tada-text-primary); background: transparent; }
+.tada-field__input::placeholder { color: var(--tada-text-placeholder); }
+.tada-field__leading { margin-left: var(--tada-space-4); display: grid; place-items: center; color: var(--tada-text-secondary); }
+.tada-field__leading + .tada-field__input { padding-left: var(--tada-space-2); }
+.tada-field__trailing { min-width: 40px; margin-right: var(--tada-space-1); display: grid; place-items: center; }
+.tada-field__support { font-size: 12px; color: var(--tada-text-tertiary); }
+.tada-field__support--error { color: var(--tada-feedback-warning); }
+.tada-select { position: relative; }
+.tada-select__trigger { width: 100%; min-height: 44px; margin: 0; padding: 0 0 0 var(--tada-space-3); border: 1px solid var(--tada-border-primary); border-radius: var(--tada-radius-control); display: grid; grid-template-columns: minmax(0, 1fr) 36px; align-items: center; color: var(--tada-text-primary); background: var(--tada-surface-input); }
+.tada-select__value { overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.tada-select__affordance { width: 36px; height: 100%; display: grid; place-items: center; color: var(--tada-text-secondary); }
+.tada-select__listbox, .tada-dropdown__menu { position: absolute; z-index: 20; inset: calc(100% + var(--tada-space-2)) 0 auto 0; margin: 0; padding: var(--tada-space-2); border: 1px solid var(--tada-border-secondary); border-radius: var(--tada-radius-medium); list-style: none; color: var(--tada-text-primary); background: var(--tada-surface-page); box-shadow: var(--tada-shadow-dropdown); }
+.tada-select__listbox li, .tada-dropdown__item { min-height: 40px; padding: 0 var(--tada-space-3); border: 0; border-radius: var(--tada-radius-small); display: flex; align-items: center; color: inherit; background: transparent; }
+.tada-select__listbox li.is-active, .tada-select__listbox li[aria-selected='true'], .tada-dropdown__item.is-active { background: var(--tada-surface-selected); }
+.tada-select__listbox li[aria-disabled='true'] { color: var(--tada-color-text-disable); }
+.tada-dropdown { position: relative; display: inline-block; }
+.tada-dropdown__trigger { min-width: 40px; min-height: 40px; margin: 0; padding: 0; border: 0; border-radius: var(--tada-radius-control); display: grid; place-items: center; color: var(--tada-text-primary); background: var(--tada-surface-muted); }
+.tada-dropdown__menu { inset-inline: auto 0; min-width: 180px; }
+.tada-dropdown__item { width: 100%; margin: 0; cursor: pointer; }
+.tada-dropdown__item--warning { color: var(--tada-feedback-warning); }
+.tada-overlay { position: fixed; z-index: 100; inset: 0; padding: var(--tada-space-6); display: grid; place-items: center; background: var(--tada-overlay-scrim); }
+.tada-overlay__panel { width: min(560px, 100%); max-height: calc(100vh - 48px); overflow: auto; border-radius: var(--tada-radius-panel); background: var(--tada-surface-page); box-shadow: var(--tada-shadow-dropdown); }
+.tada-overlay__panel--sheet { width: min(520px, 100%); height: calc(100vh - 32px); margin-left: auto; border-radius: var(--tada-radius-panel); }
+.tada-overlay__header, .tada-overlay__body, .tada-overlay__footer { padding: var(--tada-space-6); }
+.tada-overlay__header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--tada-space-5); }
+.tada-overlay__header h2 { margin: 0; font-size: 22px; }
+.tada-overlay__header p { margin: var(--tada-space-2) 0 0; color: var(--tada-text-secondary); }
+.tada-overlay__body { padding-top: 0; }
+.tada-overlay__footer { padding-top: 0; display: flex; justify-content: flex-end; gap: var(--tada-space-3); }
+@media (max-width: 640px) { .tada-overlay { padding: var(--tada-space-3); } .tada-overlay__panel--sheet { height: calc(100vh - 24px); } }

@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "algorithm": "v1",
+  "productName": "beacon",
+  "variant": 0,
+  "seed": 2774936188,
+  "output": "public/tada-favicon.svg",
+  "sourceAssets": [
+    "brand-icon.otter_side_right_noeye_smile_solid"
+  ],
+  "plan": {
+    "sourceAssetId": "brand-icon.otter_side_right_noeye_smile_solid",
+    "shape": "circle",
+    "backgroundMode": "gradient",
+    "gradient": {
+      "x1": 50,
+      "y1": 8,
+      "x2": 14,
+      "y2": 56
+    },
+    "palette": [
+      {
+        "hue": 95,
+        "saturation": 62,
+        "lightness": 68
+      },
+      {
+        "hue": 95,
+        "saturation": 70,
+        "lightness": 55
+      },
+      {
+        "hue": 95,
+        "saturation": 76,
+        "lightness": 44
+      }
+    ],
+    "ink": "#101114"
+  },
+  "sha256": "a41859652d39b868f641b52ad1973b68ff69fee5896ccbe0e3a7e72ad258146f"
+}
