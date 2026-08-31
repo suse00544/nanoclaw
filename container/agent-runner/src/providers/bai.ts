@@ -28,7 +28,7 @@ const DEFAULT_HISTORY_CHARS = 160_000;
 const MAX_TOOL_TURNS = 24;
 const MAX_TOOL_OUTPUT_CHARS = 60_000;
 
-export type HistoryMessage = { role: 'user' | 'assistant'; content: string };
+type HistoryMessage = { role: 'user' | 'assistant'; content: string };
 
 export interface BaiConfig {
   baseURL: string;
@@ -112,11 +112,8 @@ export function buildBaiUserContent(
     | { type: 'image_url'; image_url: { url: string } }
   > = [{ type: 'text', text }];
   const seen = new Set<string>();
-  const paths = [
-    ...Array.from(text.matchAll(/\bpath="(\/workspace\/[^"]+)"/g), (match) => match[1]),
-    ...Array.from(text.matchAll(/\bsaved to (\/workspace\/[^\]\r\n]+)\]/g), (match) => match[1]),
-  ];
-  for (const filePath of paths) {
+  for (const match of text.matchAll(/\bpath="(\/workspace\/[^"]+)"/g)) {
+    const filePath = match[1];
     const mime = IMAGE_MIME[path.extname(filePath).toLowerCase()];
     if (!mime || seen.has(filePath)) continue;
     seen.add(filePath);
@@ -129,35 +126,6 @@ export function buildBaiUserContent(
     }
   }
   return content;
-}
-
-export function buildBaiRequestMessages(
-  history: HistoryMessage[],
-  system: string,
-  readFile: (filePath: string) => Buffer = (filePath) => fs.readFileSync(filePath),
-): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
-  let latestImageIndex = -1;
-  for (let index = history.length - 1; index >= 0; index -= 1) {
-    const message = history[index];
-    if (message.role === 'user' && buildBaiUserContent(message.content, () => Buffer.alloc(0)).length > 1) {
-      latestImageIndex = index;
-      break;
-    }
-  }
-
-  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [{ role: 'system', content: system }];
-  history.forEach((message, index) => {
-    if (message.role === 'user') {
-      const includeImages = index === history.length - 1 || index === latestImageIndex;
-      messages.push({
-        role: 'user',
-        content: includeImages ? buildBaiUserContent(message.content, readFile) : message.content,
-      });
-    } else {
-      messages.push({ role: 'assistant', content: message.content });
-    }
-  });
-  return messages;
 }
 
 function safeSessionId(value: string | undefined): string {
@@ -365,7 +333,19 @@ export class BaiProvider implements AgentProvider {
           const memory = memoryContextForSessionStart(input.continuation ? 'resume' : 'startup');
           const system = [input.systemContext?.instructions, memory, toolProtocol(tools)].filter(Boolean).join('\n\n');
           activeAbort = new AbortController();
-          const requestMessages = buildBaiRequestMessages(history, system);
+          const requestMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+            { role: 'system', content: system },
+          ];
+          history.forEach((message, index) => {
+            if (message.role === 'user') {
+              requestMessages.push({
+                role: 'user',
+                content: index === history.length - 1 ? buildBaiUserContent(message.content) : message.content,
+              });
+            } else {
+              requestMessages.push({ role: 'assistant', content: message.content });
+            }
+          });
           const stream = await client.chat.completions.create(
             {
               model: config.model,

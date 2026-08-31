@@ -1,12 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 
-import {
-  buildBaiRequestMessages,
-  buildBaiUserContent,
-  parseToolDirective,
-  resolveBaiConfig,
-  trimHistory,
-} from './bai.js';
+import { buildBaiUserContent, parseToolDirective, resolveBaiConfig, trimHistory } from './bai.js';
 
 const originalBaseUrl = process.env.BAI_BASE_URL;
 const originalModel = process.env.BAI_MODEL;
@@ -68,33 +62,5 @@ describe('b.ai vision input', () => {
       },
       { type: 'image_url', image_url: { url: 'data:image/png;base64,cG5nLWJ5dGVz' } },
     ]);
-  });
-
-  it('recognizes NanoClaw staged attachment text', () => {
-    const text = '<message>[图片]\n[image: photo.jpg — saved to /workspace/inbox/message/photo.jpg]</message>';
-    expect(buildBaiUserContent(text, () => Buffer.from('photo'))).toEqual([
-      { type: 'text', text },
-      { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,cGhvdG8=' } },
-    ]);
-  });
-
-  it('keeps the latest image available when the question arrives in the next message', () => {
-    const imageText = '[image: photo.jpg — saved to /workspace/inbox/message/photo.jpg]';
-    const messages = buildBaiRequestMessages(
-      [
-        { role: 'user', content: imageText },
-        { role: 'assistant', content: 'Image received.' },
-        { role: 'user', content: 'What is in that image?' },
-      ],
-      'system',
-      () => Buffer.from('photo'),
-    );
-    expect(messages[1]).toEqual({
-      role: 'user',
-      content: [
-        { type: 'text', text: imageText },
-        { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,cGhvdG8=' } },
-      ],
-    });
   });
 });
