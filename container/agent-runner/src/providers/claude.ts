@@ -2,7 +2,12 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { query as sdkQuery, type HookCallback, type PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
+import {
+  query as sdkQuery,
+  type HookCallback,
+  type PreCompactHookInput,
+  type SDKUserMessage,
+} from '@anthropic-ai/claude-agent-sdk';
 
 import { clearContainerToolInFlight, setContainerToolInFlight } from '../db/connection.js';
 import type { MemorySessionHookRegistration } from '../memory/session-hook.js';
@@ -132,11 +137,54 @@ function mcpAllowPattern(serverName: string): string {
   return `mcp__${serverName.replace(/[^a-zA-Z0-9_-]/g, '_')}__*`;
 }
 
-interface SDKUserMessage {
-  type: 'user';
-  message: { role: 'user'; content: string };
-  parent_tool_use_id: null;
-  session_id: string;
+const IMAGE_MIME: Record<string, 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp'> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+};
+
+type UserContent = SDKUserMessage['message']['content'];
+const STAGED_IMAGE_ROOT = '/workspace/inbox/';
+
+function readStagedImage(filePath: string): Buffer {
+  const normalized = path.posix.normalize(filePath);
+  if (!normalized.startsWith(STAGED_IMAGE_ROOT)) throw new Error('path is outside the staged inbox');
+  const stat = fs.lstatSync(normalized);
+  if (!stat.isFile()) throw new Error('staged image is not a regular file');
+  return fs.readFileSync(normalized);
+}
+
+/** Attach images already staged by the channel adapter directly to the model. */
+export function buildClaudeUserContent(
+  text: string,
+  readFile: (filePath: string) => Buffer = readStagedImage,
+): UserContent {
+  const paths = [
+    ...Array.from(text.matchAll(/\bpath="(\/workspace\/inbox\/[^"]+)"/g), (match) => match[1]),
+    ...Array.from(text.matchAll(/\bsaved to (\/workspace\/inbox\/[^\]\r\n]+)\]/g), (match) => match[1]),
+  ];
+  const seen = new Set<string>();
+  const images: Exclude<UserContent, string> = [];
+
+  for (const filePath of paths) {
+    const mediaType = IMAGE_MIME[path.extname(filePath).toLowerCase()];
+    if (!mediaType || seen.has(filePath)) continue;
+    seen.add(filePath);
+    try {
+      const bytes = readFile(filePath);
+      if (bytes.length > 20 * 1024 * 1024) continue;
+      images.push({
+        type: 'image',
+        source: { type: 'base64', media_type: mediaType, data: bytes.toString('base64') },
+      });
+    } catch (error) {
+      log(`Unable to attach image ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  return images.length > 0 ? [...images, { type: 'text', text }] : text;
 }
 
 /**
@@ -150,9 +198,8 @@ class MessageStream {
   push(text: string): void {
     this.queue.push({
       type: 'user',
-      message: { role: 'user', content: text },
+      message: { role: 'user', content: buildClaudeUserContent(text) },
       parent_tool_use_id: null,
-      session_id: '',
     });
     this.waiting?.();
   }

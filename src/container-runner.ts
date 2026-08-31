@@ -649,7 +649,7 @@ async function buildContainerArgs(
   // retries.
   if (agentIdentifier) {
     await onecli.ensureAgent({ name: agentGroup.name, identifier: agentIdentifier });
-    await ensureModelSecretGrant(agentIdentifier);
+    await ensureModelSecretGrant(agentIdentifier, providerContribution.env?.ANTHROPIC_BASE_URL);
   }
   const onecliApplied = await onecli.applyContainerConfig(args, { addHostMapping: false, agent: agentIdentifier });
   if (!onecliApplied) {
@@ -681,11 +681,11 @@ interface OneCliSecretRecord {
   hostPattern?: string | null;
 }
 
-async function ensureModelSecretGrant(agentIdentifier: string): Promise<void> {
+async function ensureModelSecretGrant(agentIdentifier: string, contributedBaseUrl?: string): Promise<void> {
   if (!ONECLI_URL || !ONECLI_API_KEY) return;
 
   const env = readEnvFile(['ANTHROPIC_BASE_URL']);
-  const baseUrl = process.env.ANTHROPIC_BASE_URL || env.ANTHROPIC_BASE_URL;
+  const baseUrl = contributedBaseUrl || process.env.ANTHROPIC_BASE_URL || env.ANTHROPIC_BASE_URL;
   if (!baseUrl) return;
 
   const host = hostFromUrl(baseUrl);
