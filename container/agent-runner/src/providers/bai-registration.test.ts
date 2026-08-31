@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 
+import { listProviderNames } from './provider-registry.js';
 import './index.js';
-import { createProvider } from './factory.js';
-import { ClaudeProvider } from './claude.js';
 
-describe('b.ai provider alias', () => {
-  it('reuses the Claude Agent SDK provider', () => {
-    expect(createProvider('b.ai')).toBeInstanceOf(ClaudeProvider);
+describe('b.ai provider registration', () => {
+  it('registers b.ai via the provider barrel', () => {
+    expect(listProviderNames()).toContain('b.ai');
   });
 });

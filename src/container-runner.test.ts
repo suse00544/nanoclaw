@@ -3,7 +3,14 @@ import path from 'path';
 import os from 'os';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { extractFeishuSenderId, hardeningArgs, resolveProviderName, syncSkillSymlinks } from './container-runner.js';
+import {
+  extractFeishuSenderId,
+  hardeningArgs,
+  matchingSecretIdsForHost,
+  providerModelBaseUrl,
+  resolveProviderName,
+  syncSkillSymlinks,
+} from './container-runner.js';
 
 const tempDirs: string[] = [];
 
@@ -54,6 +61,30 @@ describe('resolveProviderName', () => {
   });
 });
 
+describe('providerModelBaseUrl', () => {
+  it('keeps Claude and b.ai credential hosts independent', () => {
+    const env = {
+      ANTHROPIC_BASE_URL: 'https://anthropic.example/v1',
+      BAI_BASE_URL: 'https://api.b.ai/v1',
+    };
+    expect(providerModelBaseUrl('claude', env, {})).toBe('https://anthropic.example/v1');
+    expect(providerModelBaseUrl('b.ai', env, {})).toBe('https://api.b.ai/v1');
+  });
+});
+
+describe('matchingSecretIdsForHost', () => {
+  it('returns every secret matching the provider host', () => {
+    expect(
+      matchingSecretIdsForHost('relay.example.com', [
+        { id: 'api-key', hostPattern: 'relay.example.com' },
+        { id: 'relay-gate', hostPattern: '*.example.com' },
+        { id: 'other', hostPattern: 'api.example.net' },
+        { id: 'empty', hostPattern: null },
+      ]),
+    ).toEqual(['api-key', 'relay-gate']);
+  });
+});
+
 describe('buildContainerArgs ordering invariant (structural)', () => {
   // The OneCLI gateway apply (SDK applyContainerConfig) appends credential-stub
   // mounts — e.g. the codex auth.json sentinel nested INSIDE our RW
@@ -70,16 +101,6 @@ describe('buildContainerArgs ordering invariant (structural)', () => {
     expect(mountsLoop).toBeGreaterThan(-1);
     expect(gatewayApply).toBeGreaterThan(-1);
     expect(gatewayApply).toBeGreaterThan(mountsLoop);
-  });
-});
-
-describe('provider-specific model credential grants', () => {
-  it('uses the provider-contributed Anthropic endpoint for OneCLI grants', () => {
-    const src = fs.readFileSync(path.join(process.cwd(), 'src', 'container-runner.ts'), 'utf-8');
-    expect(src).toContain('ensureModelSecretGrant(agentIdentifier, providerContribution.env?.ANTHROPIC_BASE_URL)');
-    expect(src).toContain('contributedBaseUrl || process.env.ANTHROPIC_BASE_URL || env.ANTHROPIC_BASE_URL');
-    expect(src).toContain('secrets.filter((row) => row.hostPattern && hostMatchesPattern(host, row.hostPattern))');
-    expect(src).toContain('for (const secret of matchingSecrets)');
   });
 });
 

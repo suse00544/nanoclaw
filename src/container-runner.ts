@@ -575,7 +575,7 @@ async function buildContainerArgs(
   containerName: string,
   agentGroup: AgentGroup,
   containerConfig: import('./container-config.js').ContainerConfig,
-  _provider: string,
+  provider: string,
   providerContribution: ProviderContainerContribution,
   agentIdentifier?: string,
 ): Promise<string[]> {
@@ -649,7 +649,7 @@ async function buildContainerArgs(
   // retries.
   if (agentIdentifier) {
     await onecli.ensureAgent({ name: agentGroup.name, identifier: agentIdentifier });
-    await ensureModelSecretGrant(agentIdentifier, providerContribution.env?.ANTHROPIC_BASE_URL);
+    await ensureModelSecretGrant(agentIdentifier, provider);
   }
   const onecliApplied = await onecli.applyContainerConfig(args, { addHostMapping: false, agent: agentIdentifier });
   if (!onecliApplied) {
@@ -681,11 +681,25 @@ interface OneCliSecretRecord {
   hostPattern?: string | null;
 }
 
-async function ensureModelSecretGrant(agentIdentifier: string, contributedBaseUrl?: string): Promise<void> {
+export function matchingSecretIdsForHost(host: string, secrets: OneCliSecretRecord[]): string[] {
+  return secrets.filter((row) => row.hostPattern && hostMatchesPattern(host, row.hostPattern)).map((row) => row.id);
+}
+
+export function providerModelBaseUrl(
+  provider: string,
+  hostEnv: NodeJS.ProcessEnv,
+  fileEnv: Record<string, string | undefined>,
+): string | undefined {
+  if (provider === 'b.ai') return hostEnv.BAI_BASE_URL || fileEnv.BAI_BASE_URL;
+  if (provider === 'claude') return hostEnv.ANTHROPIC_BASE_URL || fileEnv.ANTHROPIC_BASE_URL;
+  return undefined;
+}
+
+async function ensureModelSecretGrant(agentIdentifier: string, provider: string): Promise<void> {
   if (!ONECLI_URL || !ONECLI_API_KEY) return;
 
-  const env = readEnvFile(['ANTHROPIC_BASE_URL']);
-  const baseUrl = contributedBaseUrl || process.env.ANTHROPIC_BASE_URL || env.ANTHROPIC_BASE_URL;
+  const env = readEnvFile(['ANTHROPIC_BASE_URL', 'BAI_BASE_URL']);
+  const baseUrl = providerModelBaseUrl(provider, process.env, env);
   if (!baseUrl) return;
 
   const host = hostFromUrl(baseUrl);
@@ -697,14 +711,15 @@ async function ensureModelSecretGrant(agentIdentifier: string, contributedBaseUr
       onecliJson<OneCliSecretRecord[]>('/v1/secrets'),
     ]);
     const agent = agents.find((row) => row.identifier === agentIdentifier);
-    const matchingSecrets = secrets.filter((row) => row.hostPattern && hostMatchesPattern(host, row.hostPattern));
-    if (!agent || matchingSecrets.length === 0) return;
+    const secretIds = matchingSecretIdsForHost(host, secrets);
+    if (!agent || secretIds.length === 0) return;
 
-    for (const secret of matchingSecrets) {
-      const memoKey = `${agent.id}:${secret.id}`;
+    let granted = 0;
+    for (const secretId of secretIds) {
+      const memoKey = `${agent.id}:${secretId}`;
       if (onecliSecretGrantMemo.has(memoKey)) continue;
 
-      const response = await fetch(`${trimOneCliUrl()}/v1/agents/${agent.id}/grants/secrets/${secret.id}`, {
+      const response = await fetch(`${trimOneCliUrl()}/v1/agents/${agent.id}/grants/secrets/${secretId}`, {
         method: 'PUT',
         headers: onecliHeaders(),
         body: JSON.stringify({}),
@@ -714,15 +729,22 @@ async function ensureModelSecretGrant(agentIdentifier: string, contributedBaseUr
         log.warn('OneCLI model secret auto-grant failed', {
           agentIdentifier,
           host,
-          secretId: secret.id,
+          secretId,
           status: response.status,
         });
         continue;
       }
 
       onecliSecretGrantMemo.add(memoKey);
-      log.info('OneCLI model secret grant ensured', { agentIdentifier, host, secretId: secret.id });
+      granted += 1;
     }
+
+    log.info('OneCLI model secret grant ensured', {
+      agentIdentifier,
+      host,
+      matchedSecretCount: secretIds.length,
+      grantedSecretCount: granted,
+    });
   } catch (err) {
     log.warn('OneCLI model secret auto-grant skipped after error', { agentIdentifier, host, err });
   }

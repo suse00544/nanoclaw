@@ -1,17 +1,26 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveBaiContainerEnv } from './bai.js';
+import { getProviderContainerConfig, listProviderContainerConfigNames } from './provider-container-registry.js';
+import './index.js';
 
-describe('b.ai Claude SDK configuration', () => {
-  it('uses the official Anthropic-compatible endpoint by default', () => {
-    const env = resolveBaiContainerEnv({}, {});
-    expect(env.ANTHROPIC_BASE_URL).toBe('https://api.b.ai');
-    expect(env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS).toBe('1');
-  });
+describe('b.ai provider host registration', () => {
+  it('registers b.ai and passes only b.ai configuration', () => {
+    expect(listProviderContainerConfigNames()).toContain('b.ai');
+    const contribution = getProviderContainerConfig('b.ai')!({
+      sessionDir: '/tmp/session',
+      agentGroupId: 'ag-test',
+      groupDir: '/tmp/group',
+      selectedSkills: [],
+      hostEnv: {
+        BAI_BASE_URL: 'https://api.b.ai/v1',
+        BAI_MODEL: 'deepseek-v4-flash-vision-exp',
+        ANTHROPIC_BASE_URL: 'https://anthropic.example/v1',
+      },
+    });
 
-  it('supports an explicit Anthropic endpoint override', () => {
-    expect(resolveBaiContainerEnv({ BAI_ANTHROPIC_BASE_URL: 'https://bai.example' }, {}).ANTHROPIC_BASE_URL).toBe(
-      'https://bai.example',
-    );
+    expect(contribution.env).toEqual({
+      BAI_BASE_URL: 'https://api.b.ai/v1',
+      BAI_MODEL: 'deepseek-v4-flash-vision-exp',
+    });
   });
 });
