@@ -4,7 +4,9 @@ import { resolveBaiContainerEnv } from './bai.js';
 
 describe('b.ai Claude SDK configuration', () => {
   it('uses the official Anthropic-compatible endpoint by default', () => {
-    expect(resolveBaiContainerEnv({}, {}).ANTHROPIC_BASE_URL).toBe('https://api.b.ai');
+    const env = resolveBaiContainerEnv({}, {});
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://api.b.ai');
+    expect(env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS).toBe('1');
   });
 
   it('supports an explicit Anthropic endpoint override', () => {
