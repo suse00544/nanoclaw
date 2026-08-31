@@ -697,29 +697,32 @@ async function ensureModelSecretGrant(agentIdentifier: string, contributedBaseUr
       onecliJson<OneCliSecretRecord[]>('/v1/secrets'),
     ]);
     const agent = agents.find((row) => row.identifier === agentIdentifier);
-    const secret = secrets.find((row) => row.hostPattern && hostMatchesPattern(host, row.hostPattern));
-    if (!agent || !secret) return;
+    const matchingSecrets = secrets.filter((row) => row.hostPattern && hostMatchesPattern(host, row.hostPattern));
+    if (!agent || matchingSecrets.length === 0) return;
 
-    const memoKey = `${agent.id}:${secret.id}`;
-    if (onecliSecretGrantMemo.has(memoKey)) return;
+    for (const secret of matchingSecrets) {
+      const memoKey = `${agent.id}:${secret.id}`;
+      if (onecliSecretGrantMemo.has(memoKey)) continue;
 
-    const response = await fetch(`${trimOneCliUrl()}/v1/agents/${agent.id}/grants/secrets/${secret.id}`, {
-      method: 'PUT',
-      headers: onecliHeaders(),
-      body: JSON.stringify({}),
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!response.ok && response.status !== 409) {
-      log.warn('OneCLI model secret auto-grant failed', {
-        agentIdentifier,
-        host,
-        status: response.status,
+      const response = await fetch(`${trimOneCliUrl()}/v1/agents/${agent.id}/grants/secrets/${secret.id}`, {
+        method: 'PUT',
+        headers: onecliHeaders(),
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(5000),
       });
-      return;
-    }
+      if (!response.ok && response.status !== 409) {
+        log.warn('OneCLI model secret auto-grant failed', {
+          agentIdentifier,
+          host,
+          secretId: secret.id,
+          status: response.status,
+        });
+        continue;
+      }
 
-    onecliSecretGrantMemo.add(memoKey);
-    log.info('OneCLI model secret grant ensured', { agentIdentifier, host });
+      onecliSecretGrantMemo.add(memoKey);
+      log.info('OneCLI model secret grant ensured', { agentIdentifier, host, secretId: secret.id });
+    }
   } catch (err) {
     log.warn('OneCLI model secret auto-grant skipped after error', { agentIdentifier, host, err });
   }

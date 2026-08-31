@@ -76,12 +76,10 @@ describe('buildContainerArgs ordering invariant (structural)', () => {
 describe('provider-specific model credential grants', () => {
   it('uses the provider-contributed Anthropic endpoint for OneCLI grants', () => {
     const src = fs.readFileSync(path.join(process.cwd(), 'src', 'container-runner.ts'), 'utf-8');
-    expect(src).toContain(
-      'ensureModelSecretGrant(agentIdentifier, providerContribution.env?.ANTHROPIC_BASE_URL)',
-    );
-    expect(src).toContain(
-      'contributedBaseUrl || process.env.ANTHROPIC_BASE_URL || env.ANTHROPIC_BASE_URL',
-    );
+    expect(src).toContain('ensureModelSecretGrant(agentIdentifier, providerContribution.env?.ANTHROPIC_BASE_URL)');
+    expect(src).toContain('contributedBaseUrl || process.env.ANTHROPIC_BASE_URL || env.ANTHROPIC_BASE_URL');
+    expect(src).toContain('secrets.filter((row) => row.hostPattern && hostMatchesPattern(host, row.hostPattern))');
+    expect(src).toContain('for (const secret of matchingSecrets)');
   });
 });
 
