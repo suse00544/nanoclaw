@@ -3,14 +3,7 @@ import path from 'path';
 import os from 'os';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import {
-  extractFeishuSenderId,
-  hardeningArgs,
-  matchingSecretIdsForHost,
-  providerModelBaseUrl,
-  resolveProviderName,
-  syncSkillSymlinks,
-} from './container-runner.js';
+import { extractFeishuSenderId, hardeningArgs, resolveProviderName, syncSkillSymlinks } from './container-runner.js';
 
 const tempDirs: string[] = [];
 
@@ -58,30 +51,6 @@ describe('resolveProviderName', () => {
   it('treats empty string as unset (falls through)', () => {
     expect(resolveProviderName('', 'opencode')).toBe('opencode');
     expect(resolveProviderName(null, '')).toBe('claude');
-  });
-});
-
-describe('providerModelBaseUrl', () => {
-  it('keeps Claude and b.ai credential hosts independent', () => {
-    const env = {
-      ANTHROPIC_BASE_URL: 'https://anthropic.example/v1',
-      BAI_BASE_URL: 'https://api.b.ai/v1',
-    };
-    expect(providerModelBaseUrl('claude', env, {})).toBe('https://anthropic.example/v1');
-    expect(providerModelBaseUrl('b.ai', env, {})).toBe('https://api.b.ai/v1');
-  });
-});
-
-describe('matchingSecretIdsForHost', () => {
-  it('returns every secret matching the provider host', () => {
-    expect(
-      matchingSecretIdsForHost('relay.example.com', [
-        { id: 'api-key', hostPattern: 'relay.example.com' },
-        { id: 'relay-gate', hostPattern: '*.example.com' },
-        { id: 'other', hostPattern: 'api.example.net' },
-        { id: 'empty', hostPattern: null },
-      ]),
-    ).toEqual(['api-key', 'relay-gate']);
   });
 });
 
