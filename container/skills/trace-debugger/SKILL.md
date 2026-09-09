@@ -40,6 +40,8 @@ LANGFUSE_BASE_URL=https://cloud.langfuse.com
 
 第三个参数可取 `auto`、`production`、`preview`。默认使用 `auto`：固定优先查询正式环境，失败或未命中时再查预览环境。反馈明确标注环境时可直接指定 `production` 或 `preview`，减少一次无效请求。
 
+必须以该脚本返回的成功 JSON 为准，不得手工拼接接口后凭错误文本推断“两个环境都查过”。配置文件缺失、网络超时或认证失败时，应明确报告对应环境未完成查询，不能表述为 trace/session 不存在。
+
 注意：agent 容器默认可能带有 OneCLI 的 `HTTPS_PROXY`。Langfuse 凭证已经由本配置文件显式提供，查询 Langfuse 时必须绕过 OneCLI 代理，避免网关返回 `resolution_failed`。所有 `curl` 命令都加 `--noproxy '*'`。
 
 ---
