@@ -11,17 +11,16 @@ description: Tada AI 质量反馈排查。收到用户反馈后拉 Langfuse trac
 
 ---
 
-## Langfuse 凭证
+## Langfuse 环境与凭证
 
-凭证不写在 skill 文档里。默认从当前 agent group 的配置文件读取：
+凭证不写在 skill 文档里。当前支持正式环境和预览环境，两套凭证分别放在当前 agent group 的配置目录：
 
 ```bash
-set -a
-source /workspace/agent/config/langfuse.env
-set +a
+/workspace/agent/config/langfuse.env          # 正式环境
+/workspace/agent/config/langfuse-preview.env  # Tada-Agent-Preview
 ```
 
-配置文件必须提供：
+两个文件使用相同变量名：
 
 ```bash
 LANGFUSE_PUBLIC_KEY=...
@@ -29,7 +28,17 @@ LANGFUSE_SECRET_KEY=...
 LANGFUSE_BASE_URL=https://cloud.langfuse.com
 ```
 
-如果这些变量已经由运行环境提供，可以直接使用环境变量。认证方式：HTTP Basic Auth，username = `LANGFUSE_PUBLIC_KEY`，password = `LANGFUSE_SECRET_KEY`。
+认证方式：HTTP Basic Auth，username = `LANGFUSE_PUBLIC_KEY`，password = `LANGFUSE_SECRET_KEY`。禁止打印、转述或把这些变量写进排查结论。
+
+使用 skill 自带脚本查询，避免手工切换凭证：
+
+```bash
+/app/skills/trace-debugger/scripts/langfuse-query.sh trace <trace_id> auto
+/app/skills/trace-debugger/scripts/langfuse-query.sh session <session_id> auto
+/app/skills/trace-debugger/scripts/langfuse-query.sh observations <trace_id> auto
+```
+
+第三个参数可取 `auto`、`production`、`preview`。默认使用 `auto`：固定优先查询正式环境，失败或未命中时再查预览环境。反馈明确标注环境时可直接指定 `production` 或 `preview`，减少一次无效请求。
 
 注意：agent 容器默认可能带有 OneCLI 的 `HTTPS_PROXY`。Langfuse 凭证已经由本配置文件显式提供，查询 Langfuse 时必须绕过 OneCLI 代理，避免网关返回 `resolution_failed`。所有 `curl` 命令都加 `--noproxy '*'`。
 
@@ -66,17 +75,12 @@ langfuse_session_id：<session id>
 
 ---
 
-## Trace 查询 API
+## Trace 查询
 
 ### 查单轮 trace
 
 ```bash
-set -a
-source /workspace/agent/config/langfuse.env
-set +a
-
-curl --noproxy '*' -s -u "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" \
-  "$LANGFUSE_BASE_URL/api/public/traces/{trace_id}"
+/app/skills/trace-debugger/scripts/langfuse-query.sh trace {trace_id} auto
 ```
 
 关键字段：`input`（用户消息）、`output`（Agent 回复）、`metadata.elapsed_ms`（耗时）、`metadata.model`（模型）、`tags`（供应商+型号）。
@@ -84,12 +88,7 @@ curl --noproxy '*' -s -u "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" \
 ### 查整个会话
 
 ```bash
-set -a
-source /workspace/agent/config/langfuse.env
-set +a
-
-curl --noproxy '*' -s -u "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" \
-  "$LANGFUSE_BASE_URL/api/public/sessions/{session_id}"
+/app/skills/trace-debugger/scripts/langfuse-query.sh session {session_id} auto
 ```
 
 返回 `traces` 数组，按时间排列的所有对话轮次。
@@ -97,12 +96,7 @@ curl --noproxy '*' -s -u "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" \
 ### 查执行细节（LLM 调用、工具调用）
 
 ```bash
-set -a
-source /workspace/agent/config/langfuse.env
-set +a
-
-curl --noproxy '*' -s -u "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" \
-  "$LANGFUSE_BASE_URL/api/public/observations?traceId={trace_id}&limit=50"
+/app/skills/trace-debugger/scripts/langfuse-query.sh observations {trace_id} auto
 ```
 
 返回 observation 类型：
@@ -111,6 +105,25 @@ curl --noproxy '*' -s -u "$LANGFUSE_PUBLIC_KEY:$LANGFUSE_SECRET_KEY" \
 - `SPAN: agent_query` — 顶层 span
 
 **重点关注**：thinking 字段（模型推理过程）、usage（token 消耗是否接近窗口限制）、工具 output 是否有 Error。
+
+---
+
+## 预览数据库补充排查
+
+只有 Langfuse trace 无法解释问题、需要核对预览环境业务状态时，才查询预览数据库。配置位于：
+
+```bash
+/workspace/agent/config/tada-agent-preview-db.env
+```
+
+配置变量为 `TADA_AGENT_DB_USER`、`TADA_AGENT_DB_EXTERNAL_HOST`、`TADA_AGENT_DB_PORT`、`TADA_AGENT_DB_PASSWORD`，可选 `TADA_AGENT_DB_NAME`（未设置时与用户名相同）。
+
+数据库排查必须遵守：
+
+1. 只执行 `SELECT`、`EXPLAIN` 或只读事务，禁止写入、DDL、授权和锁表操作。
+2. 查询必须限定用户、session、trace 或时间范围，并设置合理 `LIMIT`，禁止无条件扫描大表。
+3. 禁止输出连接密码、完整手机号、token 等敏感字段；结论中只保留定位问题所需的脱敏证据。
+4. 正式环境问题不得使用预览数据库推断结果，必须明确写出数据环境。
 
 ---
 
