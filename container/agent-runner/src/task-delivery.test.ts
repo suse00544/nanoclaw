@@ -162,6 +162,22 @@ describe('final-output blocks in a task run', () => {
     });
   });
 
+  it('delivers a final message block when the provider omits its closing tag', () => {
+    const { sent, hasUnwrapped } = dispatchResultText(
+      '<message to="family">查询完成。\n<suggestions>\n- 继续排查\n</suggestions>',
+      { ...taskRouting, taskRun: false },
+    );
+
+    const out = getUndeliveredMessages();
+    expect(sent).toBe(1);
+    expect(hasUnwrapped).toBe(false);
+    expect(out).toHaveLength(1);
+    expect(JSON.parse(out[0].content)).toEqual({
+      text: '查询完成。',
+      suggestions: ['继续排查'],
+    });
+  });
+
   it('nudges at most once and only when a task result contains inert blocks', () => {
     const blocks = [{ to: 'family', body: 'digest' }];
     expect(shouldNudgeTaskBlocks(true, blocks, false)).toBe(true);

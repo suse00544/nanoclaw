@@ -732,7 +732,9 @@ export function dispatchResultText(
   text: string,
   routing: RoutingContext,
 ): { sent: number; hasUnwrapped: boolean; taskBlocks: TaskMessageBlock[] } {
-  const MESSAGE_RE = /<message\s+to="([^"]+)"\s*>([\s\S]*?)<\/message>/g;
+  // Providers occasionally omit the closing tag on the final block. Treat
+  // end-of-result as an implicit close so a complete reply is not discarded.
+  const MESSAGE_RE = /<message\s+to="([^"]+)"\s*>([\s\S]*?)(?:<\/message>|$)/g;
 
   let match: RegExpExecArray | null;
   let sent = 0;
