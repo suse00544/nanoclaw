@@ -248,6 +248,19 @@ launchctl kickstart -k gui/$(id -u)/com.nanoclaw  # restart
 systemctl --user start|stop|restart nanoclaw
 ```
 
+## Runtime Change Verification
+
+Changes to skills, provider instructions, conversation state, routing, or delivery are not complete when a helper command or unit test passes. Verify the real user path end to end before reporting success:
+
+1. Confirm the platform message was received and routed to the expected messaging group, agent group, session, and thread.
+2. Confirm the live agent actually loaded the new instruction and invoked the intended skill/tool. A direct shell invocation only proves the helper works; it does not prove the agent used it.
+3. Confirm the session produced a `messages_out` row and the host logged successful platform delivery with a platform message ID.
+4. Inspect the delivered body for malformed envelopes, leaked `<internal>` content, duplicated replies, and wrong thread routing.
+
+Container restart and conversation reset are different operations. Provider continuations live in each session's `outbound.db` and survive container restarts. When an instruction or skill change must replace incorrect reasoning already embedded in a live conversation, clear only the affected session's provider continuation through the supported session reset path, then restart that session. Do not erase unrelated sessions or conversation history.
+
+Never claim a production messaging fix from a script-only check. Use a representative message in the affected DM/group/thread and require evidence for all four stages above. If a synthetic wake message is used for recovery, scope it to the affected session, make its user-visible effect intentional, and verify its delivery like any other message.
+
 ## Troubleshooting
 
 Check these first when something goes wrong:
