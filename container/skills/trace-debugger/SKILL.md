@@ -1,9 +1,21 @@
 ---
 name: trace-debugger
-description: Tada AI 质量反馈排查。收到用户反馈后拉 Langfuse trace，还原上下文，定位根因，输出结论。当群内收到包含 trace_id 的反馈消息时自动触发。
+description: Tada AI 质量反馈与 Langfuse 排查。用户说“查 trace/session”、给出 trace_id、session_id 或裸 ID（包括 13 位数字 ID）时必须触发；使用脚本查询正式和预览 Langfuse，还原上下文并定位根因。
 ---
 
 # Tada AI 质量反馈排查
+
+## 必须执行的查询规则
+
+1. 收到 trace ID、session ID、裸 ID，或用户说“查这个”时，必须调用本 skill 的 `langfuse-query.sh`；禁止不查询就根据 ID 格式、长度或时间戳猜测结果。
+2. `13 位纯数字` 是 Tada 常见的 Langfuse `session_id`，不是无效格式。裸的 13 位数字 ID 先执行：
+
+   ```bash
+   /app/skills/trace-debugger/scripts/langfuse-query.sh session <id> auto
+   ```
+
+3. 裸 ID 的 session 查询未命中时，再执行 `trace <id> auto`；不能反过来，也不能用“trace ID 通常是 UUID”拒绝查询。
+4. 只能依据脚本的成功 JSON 回答“查到”；脚本失败时如实报告配置、网络、认证或未命中错误。
 
 ## 核心职责
 
