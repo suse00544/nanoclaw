@@ -800,7 +800,7 @@ export function parseMessageBody(rawBody: string): ParsedMessageBody {
     return '';
   });
   return {
-    body: body.trim(),
+    body: stripInternalTags(body),
     suggestions: normalizeSuggestions(suggestions),
   };
 }

@@ -178,6 +178,17 @@ describe('final-output blocks in a task run', () => {
     });
   });
 
+  it('never delivers internal blocks nested inside a message block', () => {
+    const { sent } = dispatchResultText(
+      '<message to="family"><internal>private reasoning</internal>Visible answer</message>',
+      { ...taskRouting, taskRun: false },
+    );
+
+    const out = getUndeliveredMessages();
+    expect(sent).toBe(1);
+    expect(JSON.parse(out[0].content).text).toBe('Visible answer');
+  });
+
   it('nudges at most once and only when a task result contains inert blocks', () => {
     const blocks = [{ to: 'family', body: 'digest' }];
     expect(shouldNudgeTaskBlocks(true, blocks, false)).toBe(true);
